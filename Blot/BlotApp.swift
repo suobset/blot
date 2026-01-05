@@ -45,6 +45,11 @@ struct BlotApp: App {
         DocumentGroup(newDocument: BlotDocument()) { file in
             ContentView(document: file.$document)
                 .frame(minWidth: 900, minHeight: 700)
+                .onAppear(perform: {
+                    if let url = file.fileURL {
+                        RecentsStore.documentOpened(at: url)
+                    }
+                })
         }
         .defaultSize(width: 950, height: 750)
         .commands {
@@ -250,4 +255,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidResignActive(_ notification: Notification) {
         ToolPaletteController.shared.hidePalettesTemporarily()
     }
+    
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            // WelcomeWindow should reappear automatically, but if not:
+            NotificationCenter.default.post(name: NSNotification.Name("ShowWelcomeWindow"), object: nil)
+        }
+        return true
+    }
+    
+    func applicationDidUpdate(_ notification: Notification) {
+        let visibleWindows = NSApp.windows.filter {
+            $0.isVisible &&
+            !$0.className.contains("Welcome") &&
+            $0.className != "NSStatusBarWindow" &&
+            $0.level == .normal
+        }
+        
+        if visibleWindows.isEmpty {
+            // Trigger the same behavior as clicking the dock icon
+            _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
+        }
+    }
 }
+
