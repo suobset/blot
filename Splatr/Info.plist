@@ -6,17 +6,17 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Blot Drawing</string>
+			<string>Splatr Drawing</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
-				<string>com.blot.drawing</string>
+				<string>com.splatr.drawing</string>
 			</array>
 			<key>NSUbiquitousDocumentUserActivityType</key>
-			<string>$(PRODUCT_BUNDLE_IDENTIFIER).blotdocument</string>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER).splatrdocument</string>
 		</dict>
 		<dict>
 			<key>CFBundleTypeName</key>
@@ -70,19 +70,21 @@
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>
-			<key>UTTypeIdentifier</key>
-			<string>com.blot.drawing</string>
-			<key>UTTypeDescription</key>
-			<string>Blot Drawing</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.data</string>
 			</array>
+			<key>UTTypeDescription</key>
+			<string>Splatr Drawing</string>
+			<key>UTTypeIcons</key>
+			<dict/>
+			<key>UTTypeIdentifier</key>
+			<string>com.splatr.drawing</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
 				<array>
-					<string>blot</string>
+					<string>splatr</string>
 				</array>
 			</dict>
 		</dict>

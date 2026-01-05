@@ -1,6 +1,6 @@
 //
-//  BlotDocument.swift
-//  Blot
+//  splatrDocument.swift
+//  splatr
 //
 //  Created by Kushagra Srivastava on 1/2/26.
 //
@@ -8,34 +8,34 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// Custom .blot format
+// Custom .splatr format
 extension UTType {
-    static var blot: UTType {
-        UTType(exportedAs: "com.blot.drawing")
+    static var splatr: UTType {
+        UTType(exportedAs: "com.splatr.drawing")
     }
 }
 
-// The BlotDocument File Format stores each canvas as a simple .blot extension
+// The splatrDocument File Format stores each canvas as a simple .splatr extension
 // We use most Xcode defaults for a Mac Document app, plus this app does not need
 // syncing or anything too fancy.
-// Blot's first 16 bytes are width and height data, followed by the PNG data.
+// splatr's first 16 bytes are width and height data, followed by the PNG data.
 // If you splice off the first 16 bytes, all that remains is the Image data itself.
-struct BlotDocument: FileDocument {
+struct splatrDocument: FileDocument {
     var canvasData: Data
     var canvasSize: CGSize
     
     static let defaultSize = CGSize(width: 800, height: 600)
     
-    init(size: CGSize = BlotDocument.defaultSize) {
+    init(size: CGSize = splatrDocument.defaultSize) {
         self.canvasSize = size
-        self.canvasData = BlotDocument.createBlankCanvas(size: size)
+        self.canvasData = splatrDocument.createBlankCanvas(size: size)
     }
     
-    // Read PNG, JPEG, BMP, TIFF, and our custom .blot
-    static var readableContentTypes: [UTType] { [.blot, .png, .jpeg, .bmp, .tiff] }
+    // Read PNG, JPEG, BMP, TIFF, and our custom .splatr
+    static var readableContentTypes: [UTType] { [.splatr, .png, .jpeg, .bmp, .tiff] }
     
-    // Save as .blot by default
-    static var writableContentTypes: [UTType] { [.blot, .png, .jpeg, .pdf] }
+    // Save as .splatr by default
+    static var writableContentTypes: [UTType] { [.splatr, .png, .jpeg, .pdf] }
     
     init(configuration: ReadConfiguration) throws {
         let contentType = configuration.contentType
@@ -44,8 +44,8 @@ struct BlotDocument: FileDocument {
             throw CocoaError(.fileReadCorruptFile)
         }
         
-        if contentType == .blot {
-            // .blot is a simple format: 8 bytes for width/height as Float64, then PNG data
+        if contentType == .splatr {
+            // .splatr is a simple format: 8 bytes for width/height as Float64, then PNG data
             // We need to ensure that at least the header data exists here
             guard data.count > 16 else { throw CocoaError(.fileReadCorruptFile) }
             
@@ -91,7 +91,7 @@ struct BlotDocument: FileDocument {
         let outputData: Data
         
         switch contentType {
-        case .blot:
+        case .splatr:
             // Custom format: size header + PNG data
             var header = Data()
             var width = Float64(canvasSize.width)

@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  Blot
+//  splatr
 //
 //  Created by Kushagra Srivastava on 1/2/26.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @Binding var document: BlotDocument
+    @Binding var document: splatrDocument
     @ObservedObject var toolState = ToolPaletteState.shared
     @State private var showingResizeSheet = false
     @State private var newWidth: String = ""
@@ -139,7 +139,7 @@ struct ContentView: View {
             showingResizeSheet = true
         }
         .onReceive(NotificationCenter.default.publisher(for: .clearCanvas)) { _ in
-            document.canvasData = BlotDocument.createBlankCanvas(size: document.canvasSize)
+            document.canvasData = splatrDocument.createBlankCanvas(size: document.canvasSize)
         }
         .onReceive(NotificationCenter.default.publisher(for: .flipHorizontal)) { _ in
             flipCanvas(horizontal: true)
@@ -395,5 +395,5 @@ struct ResizeCanvasSheet: View {
 }
 
 #Preview {
-    ContentView(document: .constant(BlotDocument()))
+    ContentView(document: .constant(splatrDocument()))
 }

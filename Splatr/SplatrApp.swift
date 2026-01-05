@@ -1,6 +1,6 @@
 //
-//  BlotApp.swift
-//  Blot
+//  splatrApp.swift
+//  splatr
 //
 //  Created by Kushagra Srivastava on 1/2/26.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 import WelcomeWindow
 
 @main
-struct BlotApp: App {
+struct splatrApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) var openWindow
@@ -42,7 +42,7 @@ struct BlotApp: App {
                 }
             }
         )
-        DocumentGroup(newDocument: BlotDocument()) { file in
+        DocumentGroup(newDocument: splatrDocument()) { file in
             ContentView(document: file.$document)
                 .frame(minWidth: 640, minHeight: 480)
                 .onAppear(perform: {
@@ -55,7 +55,7 @@ struct BlotApp: App {
         .commands {
             // Replace default About menu
             CommandGroup(replacing: .appInfo) {
-                Button("About Blot") {
+                Button("About splatr") {
                     AboutWindowController.shared.showAboutWindow()
                 }
             }
