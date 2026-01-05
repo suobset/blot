@@ -1,6 +1,7 @@
 //
 //  ToolPaletteController.swift
-//  Blot
+//  splatr
+//  splatr
 //
 //  Created by Kushagra Srivastava on 1/2/26.
 //

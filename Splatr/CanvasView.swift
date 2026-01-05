@@ -1,6 +1,6 @@
 //
 //  CanvasView.swift
-//  Blot
+//  splatr
 //
 //  Created by Kushagra Srivastava on 1/2/26.
 //
@@ -9,7 +9,7 @@ import SwiftUI
 import AppKit
 
 struct CanvasView: NSViewRepresentable {
-    @Binding var document: BlotDocument
+    @Binding var document: splatrDocument
     var currentColor: NSColor
     var brushSize: CGFloat
     var currentTool: Tool
@@ -51,11 +51,11 @@ struct CanvasView: NSViewRepresentable {
     }
     
     class Coordinator {
-        var document: Binding<BlotDocument>
+        var document: Binding<splatrDocument>
         var onCanvasResize: (CGSize) -> Void
         var onCanvasUpdate: (NSImage) -> Void
         
-        init(document: Binding<BlotDocument>, onCanvasResize: @escaping (CGSize) -> Void, onCanvasUpdate: @escaping (NSImage) -> Void) {
+        init(document: Binding<splatrDocument>, onCanvasResize: @escaping (CGSize) -> Void, onCanvasUpdate: @escaping (NSImage) -> Void) {
             self.document = document
             self.onCanvasResize = onCanvasResize
             self.onCanvasUpdate = onCanvasUpdate

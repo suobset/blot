@@ -28,38 +28,38 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		C51FDBB42F08CAD000BE2805 /* Blot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Blot.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		C51FDBC42F08CAD100BE2805 /* BlotTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BlotTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		C51FDBCE2F08CAD100BE2805 /* BlotUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BlotUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C51FDBB42F08CAD000BE2805 /* Splatr.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Splatr.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C51FDBC42F08CAD100BE2805 /* SplatrTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SplatrTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C51FDBCE2F08CAD100BE2805 /* SplatrUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SplatrUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		C51FDBD62F08CAD100BE2805 /* Exceptions for "Blot" folder in "Blot" target */ = {
+		C51FDBD62F08CAD100BE2805 /* Exceptions for "Splatr" folder in "Splatr" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = C51FDBB32F08CAD000BE2805 /* Blot */;
+			target = C51FDBB32F08CAD000BE2805 /* Splatr */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		C51FDBB62F08CAD000BE2805 /* Blot */ = {
+		C51FDBB62F08CAD000BE2805 /* Splatr */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				C51FDBD62F08CAD100BE2805 /* Exceptions for "Blot" folder in "Blot" target */,
+				C51FDBD62F08CAD100BE2805 /* Exceptions for "Splatr" folder in "Splatr" target */,
 			);
-			path = Blot;
+			path = Splatr;
 			sourceTree = "<group>";
 		};
-		C51FDBC72F08CAD100BE2805 /* BlotTests */ = {
+		C51FDBC72F08CAD100BE2805 /* SplatrTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BlotTests;
+			path = SplatrTests;
 			sourceTree = "<group>";
 		};
-		C51FDBD12F08CAD100BE2805 /* BlotUITests */ = {
+		C51FDBD12F08CAD100BE2805 /* SplatrUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = BlotUITests;
+			path = SplatrUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -93,9 +93,9 @@
 		C51FDBAB2F08CAD000BE2805 = {
 			isa = PBXGroup;
 			children = (
-				C51FDBB62F08CAD000BE2805 /* Blot */,
-				C51FDBC72F08CAD100BE2805 /* BlotTests */,
-				C51FDBD12F08CAD100BE2805 /* BlotUITests */,
+				C51FDBB62F08CAD000BE2805 /* Splatr */,
+				C51FDBC72F08CAD100BE2805 /* SplatrTests */,
+				C51FDBD12F08CAD100BE2805 /* SplatrUITests */,
 				C5289D5A2F0C2CF8004D0DD8 /* Frameworks */,
 				C51FDBB52F08CAD000BE2805 /* Products */,
 			);
@@ -104,9 +104,9 @@
 		C51FDBB52F08CAD000BE2805 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				C51FDBB42F08CAD000BE2805 /* Blot.app */,
-				C51FDBC42F08CAD100BE2805 /* BlotTests.xctest */,
-				C51FDBCE2F08CAD100BE2805 /* BlotUITests.xctest */,
+				C51FDBB42F08CAD000BE2805 /* Splatr.app */,
+				C51FDBC42F08CAD100BE2805 /* SplatrTests.xctest */,
+				C51FDBCE2F08CAD100BE2805 /* SplatrUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -121,9 +121,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		C51FDBB32F08CAD000BE2805 /* Blot */ = {
+		C51FDBB32F08CAD000BE2805 /* Splatr */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C51FDBD72F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "Blot" */;
+			buildConfigurationList = C51FDBD72F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "Splatr" */;
 			buildPhases = (
 				C51FDBB02F08CAD000BE2805 /* Sources */,
 				C51FDBB12F08CAD000BE2805 /* Frameworks */,
@@ -134,19 +134,19 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				C51FDBB62F08CAD000BE2805 /* Blot */,
+				C51FDBB62F08CAD000BE2805 /* Splatr */,
 			);
-			name = Blot;
+			name = Splatr;
 			packageProductDependencies = (
 				C5289D5D2F0C2D18004D0DD8 /* WelcomeWindow */,
 			);
 			productName = Blot;
-			productReference = C51FDBB42F08CAD000BE2805 /* Blot.app */;
+			productReference = C51FDBB42F08CAD000BE2805 /* Splatr.app */;
 			productType = "com.apple.product-type.application";
 		};
-		C51FDBC32F08CAD100BE2805 /* BlotTests */ = {
+		C51FDBC32F08CAD100BE2805 /* SplatrTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C51FDBDC2F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "BlotTests" */;
+			buildConfigurationList = C51FDBDC2F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "SplatrTests" */;
 			buildPhases = (
 				C51FDBC02F08CAD100BE2805 /* Sources */,
 				C51FDBC12F08CAD100BE2805 /* Frameworks */,
@@ -158,18 +158,18 @@
 				C51FDBC62F08CAD100BE2805 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				C51FDBC72F08CAD100BE2805 /* BlotTests */,
+				C51FDBC72F08CAD100BE2805 /* SplatrTests */,
 			);
-			name = BlotTests;
+			name = SplatrTests;
 			packageProductDependencies = (
 			);
 			productName = BlotTests;
-			productReference = C51FDBC42F08CAD100BE2805 /* BlotTests.xctest */;
+			productReference = C51FDBC42F08CAD100BE2805 /* SplatrTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		C51FDBCD2F08CAD100BE2805 /* BlotUITests */ = {
+		C51FDBCD2F08CAD100BE2805 /* SplatrUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C51FDBDF2F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "BlotUITests" */;
+			buildConfigurationList = C51FDBDF2F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "SplatrUITests" */;
 			buildPhases = (
 				C51FDBCA2F08CAD100BE2805 /* Sources */,
 				C51FDBCB2F08CAD100BE2805 /* Frameworks */,
@@ -181,13 +181,13 @@
 				C51FDBD02F08CAD100BE2805 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				C51FDBD12F08CAD100BE2805 /* BlotUITests */,
+				C51FDBD12F08CAD100BE2805 /* SplatrUITests */,
 			);
-			name = BlotUITests;
+			name = SplatrUITests;
 			packageProductDependencies = (
 			);
 			productName = BlotUITests;
-			productReference = C51FDBCE2F08CAD100BE2805 /* BlotUITests.xctest */;
+			productReference = C51FDBCE2F08CAD100BE2805 /* SplatrUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -213,7 +213,7 @@
 					};
 				};
 			};
-			buildConfigurationList = C51FDBAF2F08CAD000BE2805 /* Build configuration list for PBXProject "Blot" */;
+			buildConfigurationList = C51FDBAF2F08CAD000BE2805 /* Build configuration list for PBXProject "Splatr" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -230,9 +230,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				C51FDBB32F08CAD000BE2805 /* Blot */,
-				C51FDBC32F08CAD100BE2805 /* BlotTests */,
-				C51FDBCD2F08CAD100BE2805 /* BlotUITests */,
+				C51FDBB32F08CAD000BE2805 /* Splatr */,
+				C51FDBC32F08CAD100BE2805 /* SplatrTests */,
+				C51FDBCD2F08CAD100BE2805 /* SplatrUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -288,12 +288,12 @@
 /* Begin PBXTargetDependency section */
 		C51FDBC62F08CAD100BE2805 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = C51FDBB32F08CAD000BE2805 /* Blot */;
+			target = C51FDBB32F08CAD000BE2805 /* Splatr */;
 			targetProxy = C51FDBC52F08CAD100BE2805 /* PBXContainerItemProxy */;
 		};
 		C51FDBD02F08CAD100BE2805 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = C51FDBB32F08CAD000BE2805 /* Blot */;
+			target = C51FDBB32F08CAD000BE2805 /* Splatr */;
 			targetProxy = C51FDBCF2F08CAD100BE2805 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -313,8 +313,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Blot/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Blot;
+				INFOPLIST_FILE = Splatr/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -323,7 +322,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.Blot;
+				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.splatr;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -349,8 +348,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Blot/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Blot;
+				INFOPLIST_FILE = Splatr/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -359,7 +357,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.Blot;
+				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.splatr;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -424,6 +422,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				INFOPLIST_FILE = "";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
@@ -482,6 +481,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				INFOPLIST_FILE = "";
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
@@ -501,14 +501,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.BlotTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.SplatrTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Blot.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Blot";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Splatr.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Splatr";
 			};
 			name = Debug;
 		};
@@ -522,14 +522,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.1;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.BlotTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.SplatrTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Blot.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Blot";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Splatr.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Splatr";
 			};
 			name = Release;
 		};
@@ -541,7 +541,7 @@
 				DEVELOPMENT_TEAM = V5KQRA3STK;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.BlotUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.SplatrUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -560,7 +560,7 @@
 				DEVELOPMENT_TEAM = V5KQRA3STK;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.BlotUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.skushagra.SplatrUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -574,7 +574,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		C51FDBAF2F08CAD000BE2805 /* Build configuration list for PBXProject "Blot" */ = {
+		C51FDBAF2F08CAD000BE2805 /* Build configuration list for PBXProject "Splatr" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C51FDBDA2F08CAD100BE2805 /* Debug */,
@@ -583,7 +583,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C51FDBD72F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "Blot" */ = {
+		C51FDBD72F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "Splatr" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C51FDBD82F08CAD100BE2805 /* Debug */,
@@ -592,7 +592,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C51FDBDC2F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "BlotTests" */ = {
+		C51FDBDC2F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "SplatrTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C51FDBDD2F08CAD100BE2805 /* Debug */,
@@ -601,7 +601,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C51FDBDF2F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "BlotUITests" */ = {
+		C51FDBDF2F08CAD100BE2805 /* Build configuration list for PBXNativeTarget "SplatrUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C51FDBE02F08CAD100BE2805 /* Debug */,

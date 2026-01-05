@@ -1,6 +1,6 @@
 //
 //  AboutView.swift
-//  Blot
+//  splatr
 //
 //  Created by Kushagra Srivastava on 1/2/26.
 //
@@ -25,7 +25,7 @@ struct AboutView: View {
                 .frame(height: 16)
             
             // App Name
-            Text("Blot")
+            Text("splatr")
                 .font(.system(size: 32, weight: .bold, design: .rounded))
             
             Spacer()
@@ -73,7 +73,7 @@ struct AboutView: View {
             HStack(spacing: 4) {
                 Image(systemName: "arrow.up.right.square")
                     .font(.system(size: 10))
-                Link("github.com/suobset/blot", destination: URL(string: "https://github.com/suobset/blot")!)
+                Link("github.com/suobset/splatr", destination: URL(string: "https://github.com/suobset/splatr")!)
             }
             .font(.system(size: 11))
             
@@ -123,7 +123,7 @@ class AboutWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "About Blot"
+        window.title = "About splatr"
         window.center()
         window.contentView = NSHostingView(rootView: AboutView())
         window.isReleasedWhenClosed = false
