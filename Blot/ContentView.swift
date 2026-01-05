@@ -14,65 +14,120 @@ struct ContentView: View {
     @State private var showingResizeSheet = false
     @State private var newWidth: String = ""
     @State private var newHeight: String = ""
+    @State private var canvasLockedToWindow = true
+    @State private var lastGeometrySize: CGSize? = nil
+    @State private var pendingResize: CGSize? = nil
+    
+    private let canvasPadding: CGFloat = 20
     
     var body: some View {
         GeometryReader { geometry in
-            ScrollView([.horizontal, .vertical]) {
-                CanvasView(
-                    document: $document,
-                    currentColor: NSColor(toolState.foregroundColor),
-                    brushSize: toolState.brushSize,
-                    currentTool: toolState.currentTool,
-                    onCanvasResize: { _ in },
-                    onCanvasUpdate: { image in
-                        toolState.navigatorImage = image
+            let canvasWidth = document.canvasSize.width * toolState.zoomLevel
+            let canvasHeight = document.canvasSize.height * toolState.zoomLevel
+            
+            // When unlocked, account for padding and resize handle space
+            let availableWidth = canvasLockedToWindow ? geometry.size.width : geometry.size.width - (canvasPadding * 2)
+            let availableHeight = canvasLockedToWindow ? geometry.size.height : geometry.size.height - (canvasPadding * 2)
+            let needsScroll = canvasWidth > availableWidth || canvasHeight > availableHeight
+            
+            Group {
+                if canvasLockedToWindow {
+                    // Locked: edge-to-edge, no scroll
+                    canvasContent(showResizeHandles: false)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                } else if needsScroll {
+                    // Unlocked + canvas larger than window: scrollable with padding
+                    ScrollView([.horizontal, .vertical]) {
+                        canvasContent(showResizeHandles: true)
+                            .frame(width: canvasWidth + canvasPadding, height: canvasHeight + canvasPadding)
+                            .padding(canvasPadding)
                     }
-                )
-                .frame(
-                    width: document.canvasSize.width * toolState.zoomLevel + 20,
-                    height: document.canvasSize.height * toolState.zoomLevel + 20
-                )
-                .scaleEffect(toolState.zoomLevel, anchor: .topLeading)
-                .frame(
-                    width: document.canvasSize.width * toolState.zoomLevel + 40,
-                    height: document.canvasSize.height * toolState.zoomLevel + 40,
-                    alignment: .topLeading
-                )
-                .padding(20)
+                } else {
+                    // Unlocked + canvas fits: centered with padding
+                    canvasContent(showResizeHandles: true)
+                        .frame(width: canvasWidth + canvasPadding, height: canvasHeight + canvasPadding)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                }
             }
-            .background(Color(nsColor: .controlBackgroundColor))
+            .background(Color(nsColor: canvasLockedToWindow ? .white : .controlBackgroundColor))
+            .onChange(of: geometry.size) { newSize in
+                if canvasLockedToWindow {
+                    pendingResize = newSize
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        if pendingResize == newSize {
+                            let newCanvasWidth = max(1, newSize.width / toolState.zoomLevel)
+                            let newCanvasHeight = max(1, newSize.height / toolState.zoomLevel)
+                            document.canvasSize = CGSize(width: floor(newCanvasWidth), height: floor(newCanvasHeight))
+                            pendingResize = nil
+                        }
+                    }
+                }
+                lastGeometrySize = newSize
+            }
+            .onAppear {
+                // Check if document has a real image (not default blank)
+                let isDefaultSize = document.canvasSize == CGSize(width: 800, height: 600)
+                
+                if isDefaultSize && canvasLockedToWindow {
+                    // New document: size to window
+                    let initialWidth = floor(geometry.size.width / toolState.zoomLevel)
+                    let initialHeight = floor(geometry.size.height / toolState.zoomLevel)
+                    document.canvasSize = CGSize(width: initialWidth, height: initialHeight)
+                } else if !isDefaultSize {
+                    // Opening existing image: unlock and use image dimensions
+                    canvasLockedToWindow = false
+                }
+                lastGeometrySize = geometry.size
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                // Current tool indicator
-                HStack(spacing: 4) {
-                    Image(systemName: toolState.currentTool.icon)
-                        .font(.system(size: 12))
-                    Text(toolState.currentTool.rawValue)
-                        .font(.caption)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.accentColor.opacity(0.15))
-                .cornerRadius(6)
-                
-                Divider()
-                
-                // Zoom indicator
-                if toolState.zoomLevel != 1 {
-                    Text("\(Int(toolState.zoomLevel * 100))%")
-                        .font(.caption)
+                HStack(spacing: 8) {
+                    // Lock/Unlock button
+                    Button(action: {
+                        canvasLockedToWindow.toggle()
+                        if canvasLockedToWindow, let size = lastGeometrySize {
+                            let newCanvasWidth = floor(size.width / toolState.zoomLevel)
+                            let newCanvasHeight = floor(size.height / toolState.zoomLevel)
+                            document.canvasSize = CGSize(width: newCanvasWidth, height: newCanvasHeight)
+                        }
+                    }) {
+                        Image(systemName: canvasLockedToWindow ? "lock.fill" : "lock.open")
+                            .foregroundColor(canvasLockedToWindow ? .accentColor : .secondary)
+                        Text(canvasLockedToWindow ? "Fit to Window" : "Custom Size")
+                    }
+                    .help(canvasLockedToWindow ? "Canvas resizes with window" : "Canvas size is independent of window")
+                    
+                    Divider()
+                    
+                    // Current tool indicator
+                    HStack(spacing: 4) {
+                        Image(systemName: toolState.currentTool.icon)
+                        Text(toolState.currentTool.rawValue)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.accentColor.opacity(0.15))
+                    .cornerRadius(6)
+                    
+                    Divider()
+                    
+                    // Zoom indicator
+                    if toolState.zoomLevel != 1 {
+                        Text("\(Int(toolState.zoomLevel * 100))%")
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(4)
+                    }
+                    
+                    // Canvas size
+                    Text("\(Int(document.canvasSize.width)) × \(Int(document.canvasSize.height))")
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.1))
-                        .cornerRadius(4)
                 }
-                
-                // Canvas size
-                Text("\(Int(document.canvasSize.width)) × \(Int(document.canvasSize.height))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .font(.caption)  // Makes all text smaller
+                .controlSize(.large)  // Makes controls larger
+                .padding(.horizontal, 16) // Increase padding for liquid glass
             }
         }
         .onAppear {
@@ -118,11 +173,37 @@ struct ContentView: View {
                 width: $newWidth,
                 height: $newHeight,
                 onResize: { w, h in
+                    canvasLockedToWindow = false
                     document.canvasSize = CGSize(width: w, height: h)
                 }
             )
         }
     }
+    
+    // MARK: - Canvas Content
+    
+    private func canvasContent(showResizeHandles: Bool) -> some View {
+        CanvasView(
+            document: $document,
+            currentColor: NSColor(toolState.foregroundColor),
+            brushSize: toolState.brushSize,
+            currentTool: toolState.currentTool,
+            showResizeHandles: showResizeHandles,
+            onCanvasResize: { newSize in
+                canvasLockedToWindow = false
+            },
+            onCanvasUpdate: { image in
+                toolState.navigatorImage = image
+            }
+        )
+        .frame(
+            width: document.canvasSize.width,
+            height: document.canvasSize.height
+        )
+        .scaleEffect(toolState.zoomLevel, anchor: .topLeading)
+    }
+    
+    // MARK: - Canvas Operations
     
     private func flipCanvas(horizontal: Bool) {
         guard let image = NSImage(data: document.canvasData) else { return }

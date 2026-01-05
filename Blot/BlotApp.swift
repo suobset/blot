@@ -44,7 +44,7 @@ struct BlotApp: App {
         )
         DocumentGroup(newDocument: BlotDocument()) { file in
             ContentView(document: file.$document)
-                .frame(minWidth: 900, minHeight: 700)
+                .frame(minWidth: 640, minHeight: 480)
                 .onAppear(perform: {
                     if let url = file.fileURL {
                         RecentsStore.documentOpened(at: url)
@@ -234,9 +234,30 @@ extension Notification.Name {
 
 // MARK: - App Delegate
 class AppDelegate: NSObject, NSApplicationDelegate {
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            ToolPaletteController.shared.showAllPalettes()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: nil
+        )
+    }
+
+    @objc func windowWillClose(_ notification: Notification) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            let documentWindows = NSApp.windows.filter { window in
+                window.isVisible &&
+                !window.className.contains("Panel") &&
+                !window.className.contains("Welcome") &&
+                window.styleMask.contains(.titled) &&
+                window.windowController?.document != nil
+            }
+            
+            if documentWindows.isEmpty {
+                // Try sending the menu action that would show the welcome window
+                NSApp.sendAction(Selector(("showWelcomeWindow:")), to: nil, from: nil)
+            }
         }
     }
     

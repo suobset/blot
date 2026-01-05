@@ -13,6 +13,7 @@ struct CanvasView: NSViewRepresentable {
     var currentColor: NSColor
     var brushSize: CGFloat
     var currentTool: Tool
+    var showResizeHandles: Bool
     var onCanvasResize: (CGSize) -> Void
     var onCanvasUpdate: (NSImage) -> Void
     
@@ -22,6 +23,7 @@ struct CanvasView: NSViewRepresentable {
         view.currentColor = currentColor
         view.brushSize = brushSize
         view.currentTool = currentTool
+        view.showResizeHandles = showResizeHandles
         view.canvasSize = document.canvasSize
         view.loadImage(from: document.canvasData)
         return view
@@ -31,6 +33,7 @@ struct CanvasView: NSViewRepresentable {
         nsView.currentColor = currentColor
         nsView.brushSize = brushSize
         nsView.currentTool = currentTool
+        nsView.showResizeHandles = showResizeHandles
         
         if nsView.canvasSize != document.canvasSize {
             let newSize = document.canvasSize
@@ -38,6 +41,9 @@ struct CanvasView: NSViewRepresentable {
                 nsView.resizeCanvas(to: newSize)
             }
         }
+        
+        // Redraw if resize handles visibility changed
+        nsView.setNeedsDisplay(nsView.bounds)
     }
     
     func makeCoordinator() -> Coordinator {
@@ -86,6 +92,7 @@ class CanvasNSView: NSView {
     var currentColor: NSColor = .black
     var brushSize: CGFloat = 4.0
     var currentTool: Tool = .pencil
+    var showResizeHandles: Bool = true
     
     // Drawing state
     private var currentPath: [NSPoint] = []
@@ -133,7 +140,11 @@ class CanvasNSView: NSView {
     override var acceptsFirstResponder: Bool { true }
     
     override var intrinsicContentSize: NSSize {
-        NSSize(width: canvasSize.width + handleSize, height: canvasSize.height + handleSize)
+        if showResizeHandles {
+            return NSSize(width: canvasSize.width + handleSize, height: canvasSize.height + handleSize)
+        } else {
+            return NSSize(width: canvasSize.width, height: canvasSize.height)
+        }
     }
     
     // MARK: - Image Loading
@@ -216,8 +227,10 @@ class CanvasNSView: NSView {
         // Selection
         drawSelection()
         
-        // Resize handles
-        drawResizeHandles()
+        // Resize handles (only if enabled)
+        if showResizeHandles {
+            drawResizeHandles()
+        }
     }
     
     private func drawCurrentStroke() {
@@ -359,10 +372,13 @@ class CanvasNSView: NSView {
     private func drawResizeHandles() {
         NSColor.controlAccentColor.setFill()
         
+        // Right edge handle
         NSBezierPath(roundedRect: NSRect(x: canvasSize.width, y: canvasSize.height/2 - 4, width: 6, height: 8),
                      xRadius: 2, yRadius: 2).fill()
+        // Bottom edge handle
         NSBezierPath(roundedRect: NSRect(x: canvasSize.width/2 - 4, y: -6, width: 8, height: 6),
                      xRadius: 2, yRadius: 2).fill()
+        // Corner handle
         NSBezierPath(roundedRect: NSRect(x: canvasSize.width, y: -6, width: 6, height: 6),
                      xRadius: 2, yRadius: 2).fill()
     }
@@ -405,7 +421,7 @@ class CanvasNSView: NSView {
     }
     
     private func updateCursor(at point: NSPoint) {
-        if resizeEdgeAt(point) != .none {
+        if showResizeHandles && resizeEdgeAt(point) != .none {
             switch resizeEdgeAt(point) {
             case .right: NSCursor.resizeLeftRight.set()
             case .bottom: NSCursor.resizeUpDown.set()
@@ -418,6 +434,8 @@ class CanvasNSView: NSView {
     }
     
     private func resizeEdgeAt(_ point: NSPoint) -> ResizeEdge {
+        guard showResizeHandles else { return .none }
+        
         if NSRect(x: canvasSize.width - 12, y: -6, width: 18, height: 18).contains(point) { return .corner }
         if NSRect(x: canvasSize.width - 4, y: 12, width: 12, height: canvasSize.height - 24).contains(point) { return .right }
         if NSRect(x: 12, y: -6, width: canvasSize.width - 24, height: 12).contains(point) { return .bottom }
@@ -428,11 +446,13 @@ class CanvasNSView: NSView {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         
-        // Check resize handles first
-        resizeEdge = resizeEdgeAt(point)
-        if resizeEdge != .none {
-            isResizing = true
-            return
+        // Check resize handles first (only if visible)
+        if showResizeHandles {
+            resizeEdge = resizeEdgeAt(point)
+            if resizeEdge != .none {
+                isResizing = true
+                return
+            }
         }
         
         let p = clamp(point)
