@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import WelcomeWindow
 
 @main
 struct splatrApp: App {
@@ -14,10 +13,8 @@ struct splatrApp: App {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openWindow) var openWindow
     
-    // MARK: - Welcome Window  Body
     var body: some Scene {
         WelcomeWindow(
-            // Add two action buttons below the app icon
             actions : { dismiss in
                 WelcomeButton(
                     iconName: "paintbrush",
@@ -37,7 +34,7 @@ struct splatrApp: App {
                 )
             },
             onDrop: { url, dismiss in
-                    NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, _ in
+                NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, _ in
                     dismiss()
                 }
             }
@@ -53,38 +50,23 @@ struct splatrApp: App {
         }
         .defaultSize(width: 950, height: 750)
         .commands {
-            // Replace default About menu
             CommandGroup(replacing: .appInfo) {
                 Button("About splatr") {
                     AboutWindowController.shared.showAboutWindow()
                 }
             }
             
-            // File menu - Export As
             CommandGroup(after: .saveItem) {
                 Menu("Export As") {
-                    Button("PNG...") {
-                        NotificationCenter.default.post(name: .exportPNG, object: nil)
-                    }
-                    Button("JPEG...") {
-                        NotificationCenter.default.post(name: .exportJPEG, object: nil)
-                    }
-                    Button("TIFF...") {
-                        NotificationCenter.default.post(name: .exportTIFF, object: nil)
-                    }
-                    Button("BMP...") {
-                        NotificationCenter.default.post(name: .exportBMP, object: nil)
-                    }
-                    Button("GIF...") {
-                        NotificationCenter.default.post(name: .exportGIF, object: nil)
-                    }
-                    Button("PDF...") {
-                        NotificationCenter.default.post(name: .exportPDF, object: nil)
-                    }
+                    Button("PNG...") { NotificationCenter.default.post(name: .exportPNG, object: nil) }
+                    Button("JPEG...") { NotificationCenter.default.post(name: .exportJPEG, object: nil) }
+                    Button("TIFF...") { NotificationCenter.default.post(name: .exportTIFF, object: nil) }
+                    Button("BMP...") { NotificationCenter.default.post(name: .exportBMP, object: nil) }
+                    Button("GIF...") { NotificationCenter.default.post(name: .exportGIF, object: nil) }
+                    Button("PDF...") { NotificationCenter.default.post(name: .exportPDF, object: nil) }
                 }
             }
             
-            // Replace the default undo/redo commands
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") {
                     if let undoManager = NSApp.keyWindow?.undoManager, undoManager.canUndo {
@@ -108,7 +90,6 @@ struct splatrApp: App {
                 .keyboardShortcut(.delete, modifiers: [.command])
             }
             
-            // Add to existing View menu
             CommandGroup(after: .toolbar) {
                 Divider()
                 
@@ -127,6 +108,11 @@ struct splatrApp: App {
                 }
                 .keyboardShortcut("3", modifiers: [.command])
                 
+                Button("Show Text Options") {
+                    ToolPaletteController.shared.showTextOptions()
+                }
+                .keyboardShortcut("4", modifiers: [.command])
+                
                 Divider()
                 
                 Button("Show All Palettes") {
@@ -140,7 +126,6 @@ struct splatrApp: App {
                 .keyboardShortcut("0", modifiers: [.command, .shift])
             }
             
-            // Tools menu with all 16 XP Paint tools
             CommandMenu("Tools") {
                 Section("Selection") {
                     Button("Free-Form Select") { ToolPaletteState.shared.currentTool = .freeFormSelect }
@@ -202,7 +187,43 @@ struct splatrApp: App {
                 .keyboardShortcut("[", modifiers: [])
             }
             
-            // Image menu
+            // Format menu for text styling shortcuts
+            CommandMenu("Format") {
+                Button("Bold") {
+                    ToolPaletteState.shared.isBold.toggle()
+                }
+                .keyboardShortcut("b", modifiers: [.command])
+                
+                Button("Italic") {
+                    ToolPaletteState.shared.isItalic.toggle()
+                }
+                .keyboardShortcut("i", modifiers: [.command])
+                
+                Button("Underline") {
+                    ToolPaletteState.shared.isUnderlined.toggle()
+                }
+                .keyboardShortcut("u", modifiers: [.command])
+                
+                Divider()
+                
+                Button("Bigger") {
+                    ToolPaletteState.shared.fontSize = min(200, ToolPaletteState.shared.fontSize + 2)
+                }
+                .keyboardShortcut("+", modifiers: [.command, .shift])
+                
+                Button("Smaller") {
+                    ToolPaletteState.shared.fontSize = max(1, ToolPaletteState.shared.fontSize - 2)
+                }
+                .keyboardShortcut("-", modifiers: [.command])
+                
+                Divider()
+                
+                Button("Show Text Options...") {
+                    ToolPaletteController.shared.showTextOptions()
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
+            }
+            
             CommandMenu("Image") {
                 Button("Resize Canvas...") {
                     NotificationCenter.default.post(name: .resizeCanvas, object: nil)
@@ -271,7 +292,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             
             if documentWindows.isEmpty {
-                // Try sending the menu action that would show the welcome window
                 NSApp.sendAction(Selector(("showWelcomeWindow:")), to: nil, from: nil)
             }
         }
@@ -295,7 +315,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            // WelcomeWindow should reappear automatically, but if not:
             NotificationCenter.default.post(name: NSNotification.Name("ShowWelcomeWindow"), object: nil)
         }
         return true
@@ -310,7 +329,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         
         if visibleWindows.isEmpty {
-            // Trigger the same behavior as clicking the dock icon
             _ = applicationShouldHandleReopen(NSApp, hasVisibleWindows: false)
         }
     }
