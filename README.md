@@ -121,6 +121,7 @@ So I built one. In a weekend. With vibes.
 Splatr uses the following open source projects:
 
 - [WelcomeWindow](https://github.com/CodeEditApp/WelcomeWindow) by CodeEdit — MIT License
+- [create-dmg](https://github.com/create-dmg/create-dmg) - MIT License
 
 ## Contributing
 
