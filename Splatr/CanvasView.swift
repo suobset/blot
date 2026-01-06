@@ -1134,6 +1134,12 @@ class CanvasNSView: NSView {
         
         textInsertPoint = point
         
+        // Build the font with style attributes
+        let state = ToolPaletteState.shared
+        var font = NSFont(name: state.fontName, size: state.fontSize) ?? NSFont.systemFont(ofSize: state.fontSize)
+        
+        // Apply bold/italics using 
+        
         let tf = NSTextField(frame: NSRect(x: point.x, y: point.y - 20, width: 200, height: 24))
         tf.isBordered = true
         tf.backgroundColor = .white

@@ -1,7 +1,6 @@
 //
 //  ToolPaletteController.swift
 //  splatr
-//  splatr
 //
 //  Created by Kushagra Srivastava on 1/2/26.
 //
@@ -12,28 +11,20 @@ import Combine
 
 // MARK: - Tool Enum (All 16 MS Paint XP Tools)
 enum Tool: String, CaseIterable, Identifiable {
-    // Selection tools (Row 1)
     case freeFormSelect = "Free-Form Select"
     case rectangleSelect = "Select"
-    // Row 2
     case eraser = "Eraser"
     case fill = "Fill"
-    // Row 3
     case colorPicker = "Pick Color"
     case magnifier = "Magnifier"
-    // Row 4
     case pencil = "Pencil"
     case brush = "Brush"
-    // Row 5
     case airbrush = "Airbrush"
     case text = "Text"
-    // Row 6
     case line = "Line"
     case curve = "Curve"
-    // Row 7
     case rectangle = "Rectangle"
     case polygon = "Polygon"
-    // Row 8
     case ellipse = "Ellipse"
     case roundedRectangle = "Rounded Rect"
     
@@ -116,7 +107,10 @@ class ToolPaletteState: ObservableObject {
     
     // Text settings
     @Published var fontName: String = "Helvetica"
-    @Published var fontSize: CGFloat = 14
+    @Published var fontSize: CGFloat = 24
+    @Published var isBold: Bool = false
+    @Published var isItalic: Bool = false
+    @Published var isUnderlined: Bool = false
 }
 
 // MARK: - Palette Controller
@@ -126,10 +120,25 @@ class ToolPaletteController {
     private var toolPaletteWindow: NSPanel?
     private var colorPaletteWindow: NSPanel?
     private var navigatorWindow: NSPanel?
+    private var textOptionsWindow: NSPanel?
     
     private var toolPaletteVisible = true
     private var colorPaletteVisible = true
     private var navigatorVisible = true
+    private var textOptionsVisible = false
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    private init() {
+        // Watch for text tool selection
+        ToolPaletteState.shared.$currentTool
+            .sink { [weak self] tool in
+                if tool == .text {
+                    self?.showTextOptions()
+                }
+            }
+            .store(in: &cancellables)
+    }
     
     private func createPanel(title: String, rect: NSRect) -> NSPanel {
         let panel = NSPanel(
@@ -156,27 +165,34 @@ class ToolPaletteController {
         showToolPalette()
         showColorPalette()
         showNavigator()
+        if textOptionsVisible || ToolPaletteState.shared.currentTool == .text {
+            showTextOptions()
+        }
     }
     
     func hideAllPalettes() {
         toolPaletteVisible = false
         colorPaletteVisible = false
         navigatorVisible = false
+        textOptionsVisible = false
         toolPaletteWindow?.orderOut(nil)
         colorPaletteWindow?.orderOut(nil)
         navigatorWindow?.orderOut(nil)
+        textOptionsWindow?.orderOut(nil)
     }
     
     func showPalettesIfNeeded() {
         if toolPaletteVisible { toolPaletteWindow?.orderFront(nil) }
         if colorPaletteVisible { colorPaletteWindow?.orderFront(nil) }
         if navigatorVisible { navigatorWindow?.orderFront(nil) }
+        if textOptionsVisible { textOptionsWindow?.orderFront(nil) }
     }
     
     func hidePalettesTemporarily() {
         toolPaletteWindow?.orderOut(nil)
         colorPaletteWindow?.orderOut(nil)
         navigatorWindow?.orderOut(nil)
+        textOptionsWindow?.orderOut(nil)
     }
     
     func showToolPalette() {
@@ -220,13 +236,150 @@ class ToolPaletteController {
         panel.orderFront(nil)
         navigatorWindow = panel
     }
+    
+    func showTextOptions() {
+        textOptionsVisible = true
+        if let window = textOptionsWindow {
+            window.orderFront(nil)
+            return
+        }
+        
+        let screenWidth = NSScreen.main?.frame.width ?? 1200
+        let screenHeight = NSScreen.main?.frame.height ?? 800
+        // Position below navigator
+        let panel = createPanel(title: "Text Options", rect: NSRect(x: screenWidth - 220, y: screenHeight - 430, width: 180, height: 160))
+        panel.contentView = NSHostingView(rootView: TextOptionsView())
+        panel.delegate = TextOptionsPanelDelegate.shared
+        panel.orderFront(nil)
+        textOptionsWindow = panel
+    }
+    
+    func hideTextOptions() {
+        textOptionsVisible = false
+        textOptionsWindow?.orderOut(nil)
+    }
+    
+    func toggleTextOptions() {
+        if textOptionsVisible {
+            hideTextOptions()
+        } else {
+            showTextOptions()
+        }
+    }
+}
+
+// MARK: - Text Options Panel Delegate
+class TextOptionsPanelDelegate: NSObject, NSWindowDelegate {
+    static let shared = TextOptionsPanelDelegate()
+    
+    func windowWillClose(_ notification: Notification) {
+        ToolPaletteController.shared.hideTextOptions()
+    }
+}
+
+// MARK: - Text Options View
+struct TextOptionsView: View {
+    @ObservedObject var state = ToolPaletteState.shared
+    
+    // Common fonts available on macOS
+    let availableFonts = [
+        "Helvetica", "Helvetica Neue", "Arial", "Times New Roman",
+        "Georgia", "Verdana", "Courier New", "Monaco",
+        "Menlo", "SF Pro", "Avenir", "Futura",
+        "Palatino", "Optima", "Gill Sans", "Baskerville"
+    ].sorted()
+    
+    let fontSizes: [CGFloat] = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72, 96]
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Font picker
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Font")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("", selection: $state.fontName) {
+                    ForEach(availableFonts, id: \.self) { font in
+                        Text(font)
+                            .font(.custom(font, size: 12))
+                            .tag(font)
+                    }
+                }
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+            }
+            
+            // Size picker
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Size")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Picker("", selection: $state.fontSize) {
+                        ForEach(fontSizes, id: \.self) { size in
+                            Text("\(Int(size))").tag(size)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 70)
+                    
+                    Stepper("", value: $state.fontSize, in: 1...200, step: 1)
+                        .labelsHidden()
+                }
+            }
+            
+            // Style toggles
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Style")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Toggle(isOn: $state.isBold) {
+                        Image(systemName: "bold")
+                    }
+                    .toggleStyle(.button)
+                    .help("Bold (⌘B)")
+                    
+                    Toggle(isOn: $state.isItalic) {
+                        Image(systemName: "italic")
+                    }
+                    .toggleStyle(.button)
+                    .help("Italic (⌘I)")
+                    
+                    Toggle(isOn: $state.isUnderlined) {
+                        Image(systemName: "underline")
+                    }
+                    .toggleStyle(.button)
+                    .help("Underline (⌘U)")
+                }
+            }
+            
+            // Preview
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Preview")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("AaBbCc")
+                    .font(.custom(state.fontName, size: min(state.fontSize, 24)))
+                    .fontWeight(state.isBold ? .bold : .regular)
+                    .italic(state.isItalic)
+                    .underline(state.isUnderlined)
+                    .foregroundStyle(state.foregroundColor)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(4)
+                    .background(Color.white)
+                    .cornerRadius(4)
+            }
+        }
+        .padding(10)
+        .frame(width: 180, height: 180)
+    }
 }
 
 // MARK: - Tool Palette View (Faithful to XP layout: 2 columns, 8 rows)
 struct ToolPaletteView: View {
     @ObservedObject var state = ToolPaletteState.shared
     
-    // Tools arranged in XP order (2 columns, 8 rows)
     let toolRows: [[Tool]] = [
         [.freeFormSelect, .rectangleSelect],
         [.eraser, .fill],
@@ -240,7 +393,6 @@ struct ToolPaletteView: View {
     
     var body: some View {
         VStack(spacing: 4) {
-            // Tool grid
             ForEach(0..<toolRows.count, id: \.self) { row in
                 HStack(spacing: 2) {
                     ForEach(toolRows[row]) { tool in
@@ -251,12 +403,8 @@ struct ToolPaletteView: View {
                 }
             }
             
-            Divider()
-                .padding(.vertical, 4)
-            
-            // Tool options area (changes based on selected tool)
+            Divider().padding(.vertical, 4)
             toolOptionsView
-            
             Spacer()
         }
         .padding(6)
@@ -267,11 +415,8 @@ struct ToolPaletteView: View {
     var toolOptionsView: some View {
         switch state.currentTool {
         case .eraser, .airbrush:
-            // Size options
             VStack(spacing: 2) {
-                Text("Size")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("Size").font(.caption2).foregroundStyle(.secondary)
                 ForEach([2, 4, 6, 8], id: \.self) { size in
                     Button {
                         state.brushSize = CGFloat(size)
@@ -283,20 +428,13 @@ struct ToolPaletteView: View {
                     .buttonStyle(.plain)
                 }
             }
-            
         case .brush:
-            // Brush shapes
             VStack(spacing: 2) {
-                Text("Shape")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("Shape").font(.caption2).foregroundStyle(.secondary)
                 LazyVGrid(columns: [GridItem(.fixed(20)), GridItem(.fixed(20))], spacing: 2) {
                     ForEach(BrushShape.allCases, id: \.rawValue) { shape in
-                        Button {
-                            state.brushShape = shape
-                        } label: {
-                            brushShapeIcon(shape)
-                                .frame(width: 18, height: 18)
+                        Button { state.brushShape = shape } label: {
+                            brushShapeIcon(shape).frame(width: 18, height: 18)
                         }
                         .buttonStyle(.plain)
                         .background(state.brushShape == shape ? Color.accentColor.opacity(0.3) : Color.clear)
@@ -304,17 +442,11 @@ struct ToolPaletteView: View {
                     }
                 }
             }
-            
         case .line, .curve:
-            // Line widths
             VStack(spacing: 2) {
-                Text("Width")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("Width").font(.caption2).foregroundStyle(.secondary)
                 ForEach([1, 2, 3, 4, 5], id: \.self) { width in
-                    Button {
-                        state.lineWidth = CGFloat(width)
-                    } label: {
+                    Button { state.lineWidth = CGFloat(width) } label: {
                         Rectangle()
                             .fill(state.lineWidth == CGFloat(width) ? Color.accentColor : Color.primary)
                             .frame(width: 40, height: CGFloat(width))
@@ -322,53 +454,33 @@ struct ToolPaletteView: View {
                     .buttonStyle(.plain)
                 }
             }
-            
         case .rectangle, .ellipse, .roundedRectangle, .polygon:
-            // Shape styles (outline, filled+outline, filled)
             VStack(spacing: 2) {
-                Text("Style")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("Style").font(.caption2).foregroundStyle(.secondary)
                 ForEach(ShapeStyle.allCases, id: \.rawValue) { style in
-                    Button {
-                        state.shapeStyle = style
-                    } label: {
-                        shapeStyleIcon(style)
-                            .frame(width: 40, height: 20)
+                    Button { state.shapeStyle = style } label: {
+                        shapeStyleIcon(style).frame(width: 40, height: 20)
                     }
                     .buttonStyle(.plain)
                     .background(state.shapeStyle == style ? Color.accentColor.opacity(0.3) : Color.clear)
                     .cornerRadius(2)
                 }
             }
-            
         case .magnifier:
-            // Zoom levels
             VStack(spacing: 2) {
-                Text("Zoom")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("Zoom").font(.caption2).foregroundStyle(.secondary)
                 ForEach([1, 2, 4, 6, 8], id: \.self) { zoom in
-                    Button {
-                        state.zoomLevel = CGFloat(zoom)
-                    } label: {
-                        Text("\(zoom)×")
-                            .font(.caption)
-                            .frame(width: 36)
+                    Button { state.zoomLevel = CGFloat(zoom) } label: {
+                        Text("\(zoom)×").font(.caption).frame(width: 36)
                     }
                     .buttonStyle(.bordered)
                     .tint(state.zoomLevel == CGFloat(zoom) ? .accentColor : .secondary)
                 }
             }
-            
         default:
-            // Default: brush size slider
             VStack(spacing: 4) {
-                Text("Size: \(Int(state.brushSize))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Slider(value: $state.brushSize, in: 1...20, step: 1)
-                    .frame(width: 50)
+                Text("Size: \(Int(state.brushSize))").font(.caption2).foregroundStyle(.secondary)
+                Slider(value: $state.brushSize, in: 1...20, step: 1).frame(width: 50)
             }
         }
     }
@@ -377,10 +489,8 @@ struct ToolPaletteView: View {
         Canvas { context, size in
             let rect = CGRect(origin: .zero, size: size).insetBy(dx: 3, dy: 3)
             switch shape {
-            case .circle:
-                context.fill(Circle().path(in: rect), with: .color(.primary))
-            case .square:
-                context.fill(Rectangle().path(in: rect), with: .color(.primary))
+            case .circle: context.fill(Circle().path(in: rect), with: .color(.primary))
+            case .square: context.fill(Rectangle().path(in: rect), with: .color(.primary))
             case .slashRight:
                 var path = Path()
                 path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
@@ -399,13 +509,11 @@ struct ToolPaletteView: View {
         Canvas { context, size in
             let rect = CGRect(origin: .zero, size: size).insetBy(dx: 4, dy: 4)
             switch style {
-            case .outline:
-                context.stroke(Rectangle().path(in: rect), with: .color(.primary), lineWidth: 1)
+            case .outline: context.stroke(Rectangle().path(in: rect), with: .color(.primary), lineWidth: 1)
             case .filledWithOutline:
                 context.fill(Rectangle().path(in: rect), with: .color(.secondary))
                 context.stroke(Rectangle().path(in: rect), with: .color(.primary), lineWidth: 1)
-            case .filledNoOutline:
-                context.fill(Rectangle().path(in: rect), with: .color(.primary))
+            case .filledNoOutline: context.fill(Rectangle().path(in: rect), with: .color(.primary))
             }
         }
     }
@@ -418,17 +526,12 @@ struct ToolButton: View {
     
     var body: some View {
         Button(action: action) {
-            Image(systemName: tool.icon)
-                .font(.system(size: 14))
-                .frame(width: 26, height: 26)
+            Image(systemName: tool.icon).font(.system(size: 14)).frame(width: 26, height: 26)
         }
         .buttonStyle(.plain)
         .background(isSelected ? Color.accentColor.opacity(0.25) : Color.clear)
         .cornerRadius(4)
-        .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 1.5))
         .help("\(tool.rawValue) (\(tool.shortcut))")
     }
 }
@@ -437,86 +540,62 @@ struct ToolButton: View {
 struct ColorPaletteView: View {
     @ObservedObject var state = ToolPaletteState.shared
     
-    // Exact MS Paint XP 28-color palette
     let topColors: [Color] = [
-        Color(nsColor: NSColor(red: 0, green: 0, blue: 0, alpha: 1)),         // Black
-        Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 128/255, alpha: 1)), // Gray
-        Color(nsColor: NSColor(red: 128/255, green: 0, blue: 0, alpha: 1)),   // Maroon
-        Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 0, alpha: 1)), // Olive
-        Color(nsColor: NSColor(red: 0, green: 128/255, blue: 0, alpha: 1)),   // Green
-        Color(nsColor: NSColor(red: 0, green: 128/255, blue: 128/255, alpha: 1)), // Teal
-        Color(nsColor: NSColor(red: 0, green: 0, blue: 128/255, alpha: 1)),   // Navy
-        Color(nsColor: NSColor(red: 128/255, green: 0, blue: 128/255, alpha: 1)), // Purple
-        Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 0, alpha: 1)), // Olive (dup)
-        Color(nsColor: NSColor(red: 0, green: 64/255, blue: 64/255, alpha: 1)),   // Dark Teal
-        Color(nsColor: NSColor(red: 0, green: 0, blue: 255/255, alpha: 1)),   // Blue
-        Color(nsColor: NSColor(red: 0, green: 128/255, blue: 255/255, alpha: 1)), // Light Blue
-        Color(nsColor: NSColor(red: 128/255, green: 0, blue: 255/255, alpha: 1)), // Purple-Blue
-        Color(nsColor: NSColor(red: 128/255, green: 0, blue: 64/255, alpha: 1)),  // Dark Magenta
+        Color(nsColor: NSColor(red: 0, green: 0, blue: 0, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 128/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 0, blue: 0, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 0, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 128/255, blue: 0, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 128/255, blue: 128/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 0, blue: 128/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 0, blue: 128/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 0, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 64/255, blue: 64/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 0, blue: 255/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 128/255, blue: 255/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 0, blue: 255/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 0, blue: 64/255, alpha: 1)),
     ]
     
     let bottomColors: [Color] = [
-        Color(nsColor: NSColor(red: 1, green: 1, blue: 1, alpha: 1)),         // White
-        Color(nsColor: NSColor(red: 192/255, green: 192/255, blue: 192/255, alpha: 1)), // Silver
-        Color(nsColor: NSColor(red: 1, green: 0, blue: 0, alpha: 1)),         // Red
-        Color(nsColor: NSColor(red: 1, green: 1, blue: 0, alpha: 1)),         // Yellow
-        Color(nsColor: NSColor(red: 0, green: 1, blue: 0, alpha: 1)),         // Lime
-        Color(nsColor: NSColor(red: 0, green: 1, blue: 1, alpha: 1)),         // Cyan
-        Color(nsColor: NSColor(red: 0, green: 0, blue: 1, alpha: 1)),         // Blue
-        Color(nsColor: NSColor(red: 1, green: 0, blue: 1, alpha: 1)),         // Magenta
-        Color(nsColor: NSColor(red: 1, green: 1, blue: 128/255, alpha: 1)),   // Light Yellow
-        Color(nsColor: NSColor(red: 128/255, green: 1, blue: 128/255, alpha: 1)), // Light Green
-        Color(nsColor: NSColor(red: 128/255, green: 1, blue: 1, alpha: 1)),   // Light Cyan
-        Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 1, alpha: 1)), // Light Blue
-        Color(nsColor: NSColor(red: 1, green: 128/255, blue: 128/255, alpha: 1)), // Light Red
-        Color(nsColor: NSColor(red: 1, green: 128/255, blue: 1, alpha: 1)),   // Light Magenta
+        Color(nsColor: NSColor(red: 1, green: 1, blue: 1, alpha: 1)),
+        Color(nsColor: NSColor(red: 192/255, green: 192/255, blue: 192/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 1, green: 0, blue: 0, alpha: 1)),
+        Color(nsColor: NSColor(red: 1, green: 1, blue: 0, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 1, blue: 0, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 1, blue: 1, alpha: 1)),
+        Color(nsColor: NSColor(red: 0, green: 0, blue: 1, alpha: 1)),
+        Color(nsColor: NSColor(red: 1, green: 0, blue: 1, alpha: 1)),
+        Color(nsColor: NSColor(red: 1, green: 1, blue: 128/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 1, blue: 128/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 1, blue: 1, alpha: 1)),
+        Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 1, alpha: 1)),
+        Color(nsColor: NSColor(red: 1, green: 128/255, blue: 128/255, alpha: 1)),
+        Color(nsColor: NSColor(red: 1, green: 128/255, blue: 1, alpha: 1)),
     ]
     
     var body: some View {
         HStack(spacing: 10) {
-            // Foreground/Background color display (XP style overlapping squares)
             ZStack(alignment: .topLeading) {
-                // Background color (bottom-right)
-                Rectangle()
-                    .fill(state.backgroundColor)
-                    .frame(width: 20, height: 20)
-                    .border(Color.primary.opacity(0.4), width: 1)
-                    .offset(x: 10, y: 10)
-                
-                // Foreground color (top-left)
-                Rectangle()
-                    .fill(state.foregroundColor)
-                    .frame(width: 20, height: 20)
+                Rectangle().fill(state.backgroundColor).frame(width: 20, height: 20)
+                    .border(Color.primary.opacity(0.4), width: 1).offset(x: 10, y: 10)
+                Rectangle().fill(state.foregroundColor).frame(width: 20, height: 20)
                     .border(Color.primary.opacity(0.6), width: 1)
             }
             .frame(width: 34, height: 34)
             .onTapGesture(count: 2) {
-                // Swap colors
                 let temp = state.foregroundColor
                 state.foregroundColor = state.backgroundColor
                 state.backgroundColor = temp
             }
             .help("Double-click to swap colors")
             
-            // Color picker
-            ColorPicker("", selection: $state.foregroundColor)
-                .labelsHidden()
+            ColorPicker("", selection: $state.foregroundColor).labelsHidden()
+            Divider().frame(height: 36)
             
-            Divider()
-                .frame(height: 36)
-            
-            // Color grid
             VStack(spacing: 1) {
-                HStack(spacing: 1) {
-                    ForEach(0..<14, id: \.self) { i in
-                        ColorGridButton(color: topColors[i])
-                    }
-                }
-                HStack(spacing: 1) {
-                    ForEach(0..<14, id: \.self) { i in
-                        ColorGridButton(color: bottomColors[i])
-                    }
-                }
+                HStack(spacing: 1) { ForEach(0..<14, id: \.self) { i in ColorGridButton(color: topColors[i]) } }
+                HStack(spacing: 1) { ForEach(0..<14, id: \.self) { i in ColorGridButton(color: bottomColors[i]) } }
             }
         }
         .padding(10)
@@ -529,18 +608,9 @@ struct ColorGridButton: View {
     @ObservedObject var state = ToolPaletteState.shared
     
     var body: some View {
-        Rectangle()
-            .fill(color)
-            .frame(width: 14, height: 14)
-            .border(Color.primary.opacity(0.2), width: 0.5)
-            .onTapGesture {
-                state.foregroundColor = color
-            }
-            .simultaneousGesture(
-                TapGesture().modifiers(.control).onEnded {
-                    state.backgroundColor = color
-                }
-            )
+        Rectangle().fill(color).frame(width: 14, height: 14).border(Color.primary.opacity(0.2), width: 0.5)
+            .onTapGesture { state.foregroundColor = color }
+            .simultaneousGesture(TapGesture().modifiers(.control).onEnded { state.backgroundColor = color })
             .help("Left-click: foreground, Ctrl-click: background")
     }
 }
@@ -552,20 +622,11 @@ struct NavigatorView: View {
     var body: some View {
         VStack(spacing: 8) {
             if let image = state.navigatorImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 160, maxHeight: 120)
-                    .border(Color.primary.opacity(0.2), width: 1)
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 160, maxHeight: 120).border(Color.primary.opacity(0.2), width: 1)
             } else {
-                Rectangle()
-                    .fill(Color.secondary.opacity(0.1))
-                    .frame(width: 160, height: 120)
-                    .overlay(
-                        Text("No canvas")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    )
+                Rectangle().fill(Color.secondary.opacity(0.1)).frame(width: 160, height: 120)
+                    .overlay(Text("No canvas").font(.caption).foregroundStyle(.secondary))
             }
         }
         .padding(8)
