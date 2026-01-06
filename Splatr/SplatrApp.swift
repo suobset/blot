@@ -84,8 +84,24 @@ struct splatrApp: App {
                 }
             }
             
-            // Edit menu additions
-            CommandGroup(after: .undoRedo) {
+            // Replace the default undo/redo commands
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo") {
+                    if let undoManager = NSApp.keyWindow?.undoManager, undoManager.canUndo {
+                        undoManager.undo()
+                    }
+                }
+                .keyboardShortcut("z", modifiers: .command)
+                
+                Button("Redo") {
+                    if let undoManager = NSApp.keyWindow?.undoManager, undoManager.canRedo {
+                        undoManager.redo()
+                    }
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                
+                Divider()
+                
                 Button("Clear Canvas") {
                     NotificationCenter.default.post(name: .clearCanvas, object: nil)
                 }
@@ -299,4 +315,3 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
-

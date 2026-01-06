@@ -39,6 +39,11 @@ struct CanvasView: NSViewRepresentable {
         nsView.currentTool = currentTool
         nsView.showResizeHandles = showResizeHandles
         
+        // Reload image if document data changed (e.g., from undo)
+        if nsView.currentDataHash != document.canvasData.hashValue {
+            nsView.loadImage(from: document.canvasData)
+        }
+        
         if nsView.canvasSize != document.canvasSize {
             let newSize = document.canvasSize
             DispatchQueue.main.async {
@@ -51,8 +56,7 @@ struct CanvasView: NSViewRepresentable {
     }
     
     func makeCoordinator() -> Coordinator {
-        print("makeCoordinator called")
-        return Coordinator(document: $document, undoManager: undoManager, onCanvasResize: onCanvasResize, onCanvasUpdate: onCanvasUpdate)
+        Coordinator(document: $document, undoManager: undoManager, onCanvasResize: onCanvasResize, onCanvasUpdate: onCanvasUpdate)
     }
     
     class Coordinator {
@@ -87,34 +91,29 @@ struct CanvasView: NSViewRepresentable {
                 ToolPaletteState.shared.foregroundColor = Color(nsColor: color)
             }
         }
-        // MARK: - Undo
+        
+        /// Register undo with the old canvas data, then apply new data
         func saveWithUndo(newData: Data, image: NSImage, actionName: String) {
-            print("DEBUG: saveWithUndo called for \(actionName)")
-            
             guard let undoManager = undoManager else {
-                print("DEBUG: No undo manager!")
                 canvasDidUpdate(newData, image: image)
                 return
             }
             
             let oldData = document.wrappedValue.canvasData
             
-            guard oldData != newData else {
-                print("DEBUG: Data unchanged, skipping")
-                return
-            }
+            // Don't register if nothing changed
+            guard oldData != newData else { return }
             
-            print("DEBUG: Registering undo, oldData size: \(oldData.count), newData size: \(newData.count)")
-            
+            // Capture self weakly but data strongly
             undoManager.registerUndo(withTarget: self) { [oldData, newData, actionName] coordinator in
-                print("DEBUG: Undo executed for \(actionName)")
+                // When undoing, swap the data back and register redo
                 coordinator.document.wrappedValue.canvasData = oldData
                 if let img = NSImage(data: oldData) {
                     coordinator.onCanvasUpdate(img)
                 }
                 
+                // Register redo (same logic, reversed)
                 coordinator.undoManager?.registerUndo(withTarget: coordinator) { coord in
-                    print("DEBUG: Redo executed for \(actionName)")
                     coord.document.wrappedValue.canvasData = newData
                     if let img = NSImage(data: newData) {
                         coord.onCanvasUpdate(img)
@@ -124,12 +123,9 @@ struct CanvasView: NSViewRepresentable {
             }
             undoManager.setActionName(actionName)
             
-            print("DEBUG: canUndo = \(undoManager.canUndo), canRedo = \(undoManager.canRedo)")
-            
+            // Apply the new data
             document.wrappedValue.canvasData = newData
             onCanvasUpdate(image)
-            
-            print("DEBUG: After save - canUndo = \(undoManager.canUndo)")
         }
     }
 }
@@ -139,6 +135,7 @@ class CanvasNSView: NSView {
     
     private var canvasImage: NSImage?
     var canvasSize: CGSize = CGSize(width: 800, height: 600)
+    var currentDataHash: Int = 0
     
     var currentColor: NSColor = .black
     var brushSize: CGFloat = 4.0
@@ -201,6 +198,8 @@ class CanvasNSView: NSView {
     // MARK: - Image Loading
     
     func loadImage(from data: Data) {
+        currentDataHash = data.hashValue
+        
         if data.isEmpty {
             createBlankCanvas()
             return
@@ -1214,6 +1213,9 @@ class CanvasNSView: NSView {
               let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData),
               let pngData = bitmap.representation(using: .png, properties: [:]) else { return }
+        
+        // Update hash before saving
+        currentDataHash = pngData.hashValue
         
         if let name = actionName {
             // Use undo-aware save
