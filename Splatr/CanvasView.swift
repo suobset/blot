@@ -25,13 +25,13 @@ struct CanvasView: NSViewRepresentable {
         view.brushSize = brushSize
         view.currentTool = currentTool
         view.showResizeHandles = showResizeHandles
-        view.canvasSize = document.canvasSize
-        view.loadImage(from: document.canvasData)
+        
+        // Load from document - document is source of truth
+        view.reloadFromDocument(data: document.canvasData, size: document.canvasSize)
         return view
     }
     
     func updateNSView(_ nsView: CanvasNSView, context: Context) {
-        // Update coordinator's undo manager reference
         context.coordinator.undoManager = undoManager
         
         nsView.currentColor = currentColor
@@ -39,19 +39,13 @@ struct CanvasView: NSViewRepresentable {
         nsView.currentTool = currentTool
         nsView.showResizeHandles = showResizeHandles
         
-        // Reload image if document data changed (e.g., from undo)
-        if nsView.currentDataHash != document.canvasData.hashValue {
-            nsView.loadImage(from: document.canvasData, isUndo: true)
+        // Check if document changed externally (undo, redo, clear, flip, etc.)
+        // We use hash to detect changes without expensive comparisons
+        if nsView.documentDataHash != document.canvasData.hashValue ||
+           nsView.canvasSize != document.canvasSize {
+            nsView.reloadFromDocument(data: document.canvasData, size: document.canvasSize)
         }
         
-        if nsView.canvasSize != document.canvasSize {
-            let newSize = document.canvasSize
-            DispatchQueue.main.async {
-                nsView.resizeCanvas(to: newSize)
-            }
-        }
-        
-        // Redraw if resize handles visibility changed
         nsView.setNeedsDisplay(nsView.bounds)
     }
     
@@ -72,18 +66,13 @@ struct CanvasView: NSViewRepresentable {
             self.onCanvasUpdate = onCanvasUpdate
         }
         
-        func canvasDidUpdate(_ data: Data, image: NSImage) {
-            DispatchQueue.main.async {
-                self.document.wrappedValue.canvasData = data
-                self.onCanvasUpdate(image)
-            }
+        func saveToDocument(_ data: Data, image: NSImage) {
+            document.wrappedValue.canvasData = data
+            onCanvasUpdate(image)
         }
         
-        func canvasDidResize(_ size: CGSize) {
-            DispatchQueue.main.async {
-                self.document.wrappedValue.canvasSize = size
-                self.onCanvasResize(size)
-            }
+        func requestCanvasResize(_ size: CGSize) {
+            onCanvasResize(size)
         }
         
         func colorPicked(_ color: NSColor) {
@@ -92,45 +81,24 @@ struct CanvasView: NSViewRepresentable {
             }
         }
         
-        /// Register undo with the old canvas data, then apply new data
         func saveWithUndo(newData: Data, image: NSImage, actionName: String) {
             guard let undoManager = undoManager else {
-                canvasDidUpdate(newData, image: image)
+                saveToDocument(newData, image: image)
                 return
             }
             
             let oldData = document.wrappedValue.canvasData
-            
-            // Don't register if nothing changed
             guard oldData != newData else { return }
             
-            undoManager.registerUndo(withTarget: self) { [oldData, newData, actionName] coordinator in
-                // When undoing, restore old data
-                coordinator.document.wrappedValue.canvasData = oldData
+            undoManager.registerUndo(withTarget: self) { [weak self] _ in
+                guard let self = self else { return }
+                self.document.wrappedValue.canvasData = oldData
                 if let img = NSImage(data: oldData) {
-                    coordinator.onCanvasUpdate(img)
+                    self.onCanvasUpdate(img)
                 }
-                
-                // Register redo
-                coordinator.undoManager?.registerUndo(withTarget: coordinator) { coord in
-                    coord.document.wrappedValue.canvasData = newData
-                    if let img = NSImage(data: newData) {
-                        coord.onCanvasUpdate(img)
-                    }
-                    // Register undo again for the redo (so you can undo after redo)
-                    coord.undoManager?.registerUndo(withTarget: coord) { [oldData] c in
-                        c.document.wrappedValue.canvasData = oldData
-                        if let img = NSImage(data: oldData) {
-                            c.onCanvasUpdate(img)
-                        }
-                    }
-                    coord.undoManager?.setActionName(actionName)
-                }
-                coordinator.undoManager?.setActionName(actionName)
             }
             undoManager.setActionName(actionName)
             
-            // Apply the new data
             document.wrappedValue.canvasData = newData
             onCanvasUpdate(image)
         }
@@ -140,10 +108,12 @@ struct CanvasView: NSViewRepresentable {
 class CanvasNSView: NSView {
     weak var delegate: CanvasView.Coordinator?
     
+    // Canvas state - derived from document
     private var canvasImage: NSImage?
     var canvasSize: CGSize = CGSize(width: 800, height: 600)
-    var currentDataHash: Int = 0
+    var documentDataHash: Int = 0
     
+    // Tool state
     var currentColor: NSColor = .black
     var brushSize: CGFloat = 4.0
     var currentTool: Tool = .pencil
@@ -157,11 +127,11 @@ class CanvasNSView: NSView {
     private var shapeStartPoint: NSPoint?
     private var shapeEndPoint: NSPoint?
     
-    // Curve tool (XP style: draw line, then 2 clicks for control points)
+    // Curve tool
     private var curveBaseStart: NSPoint?
     private var curveBaseEnd: NSPoint?
     private var curveControlPoint1: NSPoint?
-    private var curvePhase: Int = 0  // 0=drawing line, 1=first bend, 2=second bend
+    private var curvePhase: Int = 0
     
     // Polygon tool
     private var polygonPoints: [NSPoint] = []
@@ -181,6 +151,7 @@ class CanvasNSView: NSView {
     // Resize handles
     private var isResizing = false
     private var resizeEdge: ResizeEdge = .none
+    private var resizeStartSize: CGSize = .zero
     private let handleSize: CGFloat = 8
     
     // Airbrush
@@ -195,17 +166,16 @@ class CanvasNSView: NSView {
     override var acceptsFirstResponder: Bool { true }
     
     override var intrinsicContentSize: NSSize {
-        if showResizeHandles {
-            return NSSize(width: canvasSize.width + handleSize, height: canvasSize.height + handleSize)
-        } else {
-            return NSSize(width: canvasSize.width, height: canvasSize.height)
-        }
+        NSSize(width: canvasSize.width + (showResizeHandles ? handleSize : 0),
+               height: canvasSize.height + (showResizeHandles ? handleSize : 0))
     }
     
-    // MARK: - Image Loading
+    // MARK: - Document Loading
     
-    func loadImage(from data: Data, isUndo: Bool = false) {
-        currentDataHash = data.hashValue
+    /// Reload canvas from document data - this is the ONLY way to set canvas content
+    func reloadFromDocument(data: Data, size: CGSize) {
+        documentDataHash = data.hashValue
+        canvasSize = size
         
         if data.isEmpty {
             createBlankCanvas()
@@ -213,15 +183,24 @@ class CanvasNSView: NSView {
         }
         
         if let image = NSImage(data: data) {
-            canvasImage = image
-            canvasSize = image.size
-            invalidateIntrinsicContentSize()
-            setNeedsDisplay(bounds)
-            if !isUndo {
-                notifyUpdate()
-            }
+            // Ensure image is rendered at correct size
+            let sizedImage = NSImage(size: size)
+            sizedImage.lockFocus()
+            NSColor.white.setFill()
+            NSRect(origin: .zero, size: size).fill()
+            image.draw(in: NSRect(origin: .zero, size: size))
+            sizedImage.unlockFocus()
+            canvasImage = sizedImage
         } else {
             createBlankCanvas()
+        }
+        
+        invalidateIntrinsicContentSize()
+        setNeedsDisplay(bounds)
+        
+        // Notify navigator
+        if let img = canvasImage {
+            delegate?.onCanvasUpdate(img)
         }
     }
     
@@ -232,31 +211,6 @@ class CanvasNSView: NSView {
         NSRect(origin: .zero, size: canvasSize).fill()
         image.unlockFocus()
         canvasImage = image
-        invalidateIntrinsicContentSize()
-        setNeedsDisplay(bounds)
-    }
-    
-    func resizeCanvas(to newSize: CGSize) {
-        let oldImage = canvasImage
-        let oldSize = canvasSize
-        canvasSize = newSize
-        
-        let newImage = NSImage(size: newSize)
-        newImage.lockFocus()
-        NSColor.white.setFill()
-        NSRect(origin: .zero, size: newSize).fill()
-        
-        if let old = oldImage {
-            let drawRect = NSRect(x: 0, y: newSize.height - oldSize.height,
-                                  width: oldSize.width, height: oldSize.height)
-            old.draw(in: drawRect)
-        }
-        newImage.unlockFocus()
-        
-        canvasImage = newImage
-        invalidateIntrinsicContentSize()
-        saveToDocument(actionName: nil)  // No undo for resize
-        setNeedsDisplay(bounds)
     }
     
     // MARK: - Drawing
@@ -271,22 +225,13 @@ class CanvasNSView: NSView {
         // Main image
         canvasImage?.draw(in: NSRect(origin: .zero, size: canvasSize))
         
-        // Current stroke preview
+        // Previews
         drawCurrentStroke()
-        
-        // Shape preview
         drawShapePreview()
-        
-        // Curve preview
         drawCurvePreview()
-        
-        // Polygon preview
         drawPolygonPreview()
-        
-        // Selection
         drawSelection()
         
-        // Resize handles (only if enabled)
         if showResizeHandles {
             drawResizeHandles()
         }
@@ -357,22 +302,16 @@ class CanvasNSView: NSView {
         path.lineWidth = lineWidth
         
         if curvePhase == 0, let start = shapeStartPoint, let end = shapeEndPoint {
-            // Drawing initial line
             path.move(to: start)
             path.line(to: end)
             path.stroke()
         } else if curvePhase >= 1, let start = curveBaseStart, let end = curveBaseEnd {
-            // Show curve with control point(s)
             path.move(to: start)
-            
             let cp1 = curveControlPoint1 ?? start
             let cp2 = shapeEndPoint ?? end
-            
             if curvePhase == 1 {
-                // Quadratic-ish curve (using cp1 for both)
                 path.curve(to: end, controlPoint1: cp1, controlPoint2: cp1)
             } else {
-                // Full cubic curve
                 path.curve(to: end, controlPoint1: cp1, controlPoint2: cp2)
             }
             path.stroke()
@@ -397,7 +336,6 @@ class CanvasNSView: NSView {
     }
     
     private func drawSelection() {
-        // Draw free-form selection path preview
         if currentTool == .freeFormSelect && freeFormPath.count > 1 {
             NSColor.gray.setStroke()
             let path = NSBezierPath()
@@ -412,12 +350,10 @@ class CanvasNSView: NSView {
         
         guard let rect = selectionRect else { return }
         
-        // Draw selection image if exists
         if let selImage = selectionImage {
             selImage.draw(in: rect)
         }
         
-        // Marching ants
         let path = NSBezierPath(rect: rect)
         path.lineWidth = 1
         NSColor.white.setStroke()
@@ -431,13 +367,10 @@ class CanvasNSView: NSView {
     private func drawResizeHandles() {
         NSColor.controlAccentColor.setFill()
         
-        // Right edge handle
         NSBezierPath(roundedRect: NSRect(x: canvasSize.width, y: canvasSize.height/2 - 4, width: 6, height: 8),
                      xRadius: 2, yRadius: 2).fill()
-        // Bottom edge handle
         NSBezierPath(roundedRect: NSRect(x: canvasSize.width/2 - 4, y: -6, width: 8, height: 6),
                      xRadius: 2, yRadius: 2).fill()
-        // Corner handle
         NSBezierPath(roundedRect: NSRect(x: canvasSize.width, y: -6, width: 6, height: 6),
                      xRadius: 2, yRadius: 2).fill()
     }
@@ -505,11 +438,11 @@ class CanvasNSView: NSView {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         
-        // Check resize handles first (only if visible)
         if showResizeHandles {
             resizeEdge = resizeEdgeAt(point)
             if resizeEdge != .none {
                 isResizing = true
+                resizeStartSize = canvasSize
                 return
             }
         }
@@ -517,11 +450,7 @@ class CanvasNSView: NSView {
         let p = clamp(point)
         
         switch currentTool {
-        case .pencil, .brush:
-            currentPath = [p]
-            lastPoint = p
-            
-        case .eraser:
+        case .pencil, .brush, .eraser:
             currentPath = [p]
             lastPoint = p
             
@@ -580,7 +509,7 @@ class CanvasNSView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         
         if isResizing {
-            handleResize(to: point)
+            handleResizeDrag(to: point)
             return
         }
         
@@ -588,7 +517,6 @@ class CanvasNSView: NSView {
         
         switch currentTool {
         case .pencil, .brush, .eraser:
-            // Interpolate for smooth lines
             if let last = lastPoint {
                 let distance = hypot(p.x - last.x, p.y - last.y)
                 let steps = max(1, Int(distance / 2))
@@ -609,11 +537,7 @@ class CanvasNSView: NSView {
             setNeedsDisplay(bounds)
             
         case .curve:
-            if curvePhase == 0 {
-                shapeEndPoint = p
-            } else {
-                shapeEndPoint = p
-            }
+            shapeEndPoint = p
             setNeedsDisplay(bounds)
             
         case .polygon:
@@ -646,7 +570,6 @@ class CanvasNSView: NSView {
         if isResizing {
             isResizing = false
             resizeEdge = .none
-            saveToDocument(actionName: nil)
             return
         }
         
@@ -861,7 +784,7 @@ class CanvasNSView: NSView {
         saveToDocument(actionName: "Shape")
     }
     
-    // MARK: - Curve Tool (XP style)
+    // MARK: - Curve Tool
     
     private func handleCurveMouseDown(at point: NSPoint) {
         if curvePhase == 0 {
@@ -872,16 +795,13 @@ class CanvasNSView: NSView {
     
     private func handleCurveMouseUp(at point: NSPoint) {
         if curvePhase == 0 {
-            // Finished drawing line, store it
             curveBaseStart = shapeStartPoint
             curveBaseEnd = shapeEndPoint
             curvePhase = 1
         } else if curvePhase == 1 {
-            // First control point set
             curveControlPoint1 = point
             curvePhase = 2
         } else if curvePhase == 2 {
-            // Second control point, commit curve
             commitCurve(controlPoint2: point)
         }
     }
@@ -965,7 +885,6 @@ class CanvasNSView: NSView {
         isMovingSelection = true
         selectionOffset = NSPoint(x: point.x - rect.origin.x, y: point.y - rect.origin.y)
         
-        // Cut selection from canvas if first move
         if selectionImage != nil && originalSelectionRect == nil {
             originalSelectionRect = rect
             clearRect(rect)
@@ -984,7 +903,6 @@ class CanvasNSView: NSView {
             return
         }
         
-        // Get bounding box
         let xs = freeFormPath.map { $0.x }
         let ys = freeFormPath.map { $0.y }
         let rect = NSRect(x: xs.min()!, y: ys.min()!,
@@ -1069,10 +987,8 @@ class CanvasNSView: NSView {
         guard startX >= 0 && startX < width && startY >= 0 && startY < height else { return }
         guard let targetColor = bitmap.colorAt(x: startX, y: startY) else { return }
         
-        // Don't fill if clicking on same color
         if colorsMatch(targetColor, currentColor) { return }
         
-        // Use a simple scanline fill with a visited array (faster than Set)
         var visited = [Bool](repeating: false, count: width * height)
         var stack: [(Int, Int)] = [(startX, startY)]
         
@@ -1120,7 +1036,6 @@ class CanvasNSView: NSView {
         } else {
             state.zoomLevel = max(1, state.zoomLevel / 2)
         }
-        // Zoom is handled by ContentView's scroll view scaling
     }
     
     // MARK: - Text Tool
@@ -1133,12 +1048,6 @@ class CanvasNSView: NSView {
         }
         
         textInsertPoint = point
-        
-        // Build the font with style attributes
-        let state = ToolPaletteState.shared
-        var font = NSFont(name: state.fontName, size: state.fontSize) ?? NSFont.systemFont(ofSize: state.fontSize)
-        
-        // Apply bold/italics using 
         
         let tf = NSTextField(frame: NSRect(x: point.x, y: point.y - 20, width: 200, height: 24))
         tf.isBordered = true
@@ -1182,6 +1091,28 @@ class CanvasNSView: NSView {
         saveToDocument(actionName: "Text")
     }
     
+    // MARK: - Resize Handling
+    
+    private func handleResizeDrag(to point: NSPoint) {
+        var newSize = canvasSize
+        
+        switch resizeEdge {
+        case .right:
+            newSize.width = max(50, point.x)
+        case .bottom:
+            // Bottom handle: dragging down increases height
+            newSize.height = max(50, resizeStartSize.height + (resizeStartSize.height - point.y))
+        case .corner:
+            newSize.width = max(50, point.x)
+            newSize.height = max(50, resizeStartSize.height + (resizeStartSize.height - point.y))
+        case .none:
+            return
+        }
+        
+        // Request resize through ContentView (which handles the actual resize)
+        delegate?.requestCanvasResize(newSize)
+    }
+    
     // MARK: - Helpers
     
     private func clamp(_ point: NSPoint) -> NSPoint {
@@ -1206,44 +1137,18 @@ class CanvasNSView: NSView {
         shapeEndPoint = nil
     }
     
-    private func handleResize(to point: NSPoint) {
-        var newSize = canvasSize
-        switch resizeEdge {
-        case .right: newSize.width = max(50, point.x)
-        case .bottom: newSize.height = max(50, canvasSize.height - point.y)
-        case .corner:
-            newSize.width = max(50, point.x)
-            newSize.height = max(50, canvasSize.height - point.y)
-        case .none: return
-        }
-        
-        if newSize != canvasSize {
-            resizeCanvas(to: newSize)
-            delegate?.canvasDidResize(newSize)
-        }
-    }
-    
     private func saveToDocument(actionName: String?) {
         guard let image = canvasImage,
               let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData),
               let pngData = bitmap.representation(using: .png, properties: [:]) else { return }
         
-        // Update hash before saving
-        currentDataHash = pngData.hashValue
+        documentDataHash = pngData.hashValue
         
         if let name = actionName {
-            // Use undo-aware save
             delegate?.saveWithUndo(newData: pngData, image: image, actionName: name)
         } else {
-            // Direct save (no undo, e.g., during resize)
-            delegate?.canvasDidUpdate(pngData, image: image)
-        }
-    }
-    
-    private func notifyUpdate() {
-        if let image = canvasImage {
-            delegate?.canvasDidUpdate(Data(), image: image)
+            delegate?.saveToDocument(pngData, image: image)
         }
     }
 }

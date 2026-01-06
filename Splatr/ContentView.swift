@@ -16,7 +16,8 @@ struct ContentView: View {
     @State private var newHeight: String = ""
     @State private var canvasLockedToWindow = true
     @State private var lastGeometrySize: CGSize? = nil
-    @State private var pendingResize: CGSize? = nil
+    @State private var hasAppeared = false
+    @State private var isResizingWindow = false
     
     private let canvasPadding: CGFloat = 20
     
@@ -25,25 +26,21 @@ struct ContentView: View {
             let canvasWidth = document.canvasSize.width * toolState.zoomLevel
             let canvasHeight = document.canvasSize.height * toolState.zoomLevel
             
-            // When unlocked, account for padding and resize handle space
             let availableWidth = canvasLockedToWindow ? geometry.size.width : geometry.size.width - (canvasPadding * 2)
             let availableHeight = canvasLockedToWindow ? geometry.size.height : geometry.size.height - (canvasPadding * 2)
             let needsScroll = canvasWidth > availableWidth || canvasHeight > availableHeight
             
             Group {
                 if canvasLockedToWindow {
-                    // Locked: edge-to-edge, no scroll
                     canvasContent(showResizeHandles: false)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 } else if needsScroll {
-                    // Unlocked + canvas larger than window: scrollable with padding
                     ScrollView([.horizontal, .vertical]) {
                         canvasContent(showResizeHandles: true)
                             .frame(width: canvasWidth + canvasPadding, height: canvasHeight + canvasPadding)
                             .padding(canvasPadding)
                     }
                 } else {
-                    // Unlocked + canvas fits: centered with padding
                     canvasContent(showResizeHandles: true)
                         .frame(width: canvasWidth + canvasPadding, height: canvasHeight + canvasPadding)
                         .frame(width: geometry.size.width, height: geometry.size.height)
@@ -51,47 +48,50 @@ struct ContentView: View {
             }
             .background(Color(nsColor: canvasLockedToWindow ? .white : .controlBackgroundColor))
             .onChange(of: geometry.size) { newSize in
+                guard hasAppeared else { return }
+                lastGeometrySize = newSize
+                
+                // Only resize canvas data when locked to window
                 if canvasLockedToWindow {
-                    pendingResize = newSize
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        if pendingResize == newSize {
-                            let newCanvasWidth = max(1, newSize.width / toolState.zoomLevel)
-                            let newCanvasHeight = max(1, newSize.height / toolState.zoomLevel)
-                            document.canvasSize = CGSize(width: floor(newCanvasWidth), height: floor(newCanvasHeight))
-                            pendingResize = nil
-                        }
+                    let newCanvasSize = CGSize(
+                        width: floor(max(1, newSize.width / toolState.zoomLevel)),
+                        height: floor(max(1, newSize.height / toolState.zoomLevel))
+                    )
+                    
+                    // Only resize if meaningfully different
+                    if abs(document.canvasSize.width - newCanvasSize.width) > 1 ||
+                       abs(document.canvasSize.height - newCanvasSize.height) > 1 {
+                        resizeDocumentCanvas(to: newCanvasSize)
                     }
                 }
-                lastGeometrySize = newSize
             }
             .onAppear {
-                // Check if document has a real image (not default blank)
-                let isDefaultSize = document.canvasSize == CGSize(width: 800, height: 600)
+                lastGeometrySize = geometry.size
                 
-                if isDefaultSize && canvasLockedToWindow {
-                    // New document: size to window
-                    let initialWidth = floor(geometry.size.width / toolState.zoomLevel)
-                    let initialHeight = floor(geometry.size.height / toolState.zoomLevel)
-                    document.canvasSize = CGSize(width: initialWidth, height: initialHeight)
-                } else if !isDefaultSize {
-                    // Opening existing image: unlock and use image dimensions
+                // Determine if this is a new blank document or existing file
+                let isNewDocument = isDocumentNew()
+                
+                if isNewDocument {
+                    // New document: lock to window and create canvas at window size
+                    canvasLockedToWindow = true
+                    let initialSize = CGSize(
+                        width: floor(geometry.size.width / toolState.zoomLevel),
+                        height: floor(geometry.size.height / toolState.zoomLevel)
+                    )
+                    document.canvasSize = initialSize
+                    document.canvasData = splatrDocument.createBlankCanvas(size: initialSize)
+                } else {
+                    // Existing document: unlock and preserve its size
                     canvasLockedToWindow = false
                 }
-                lastGeometrySize = geometry.size
+                
+                hasAppeared = true
             }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 HStack(spacing: 8) {
-                    // Lock/Unlock button
-                    Button(action: {
-                        canvasLockedToWindow.toggle()
-                        if canvasLockedToWindow, let size = lastGeometrySize {
-                            let newCanvasWidth = floor(size.width / toolState.zoomLevel)
-                            let newCanvasHeight = floor(size.height / toolState.zoomLevel)
-                            document.canvasSize = CGSize(width: newCanvasWidth, height: newCanvasHeight)
-                        }
-                    }) {
+                    Button(action: toggleLock) {
                         Image(systemName: canvasLockedToWindow ? "lock.fill" : "lock.open")
                             .foregroundColor(canvasLockedToWindow ? .accentColor : .secondary)
                         Text(canvasLockedToWindow ? "Fit to Window" : "Custom Size")
@@ -100,7 +100,6 @@ struct ContentView: View {
                     
                     Divider()
                     
-                    // Current tool indicator
                     HStack(spacing: 4) {
                         Image(systemName: toolState.currentTool.icon)
                         Text(toolState.currentTool.rawValue)
@@ -112,7 +111,6 @@ struct ContentView: View {
                     
                     Divider()
                     
-                    // Zoom indicator
                     if toolState.zoomLevel != 1 {
                         Text("\(Int(toolState.zoomLevel * 100))%")
                             .padding(.horizontal, 6)
@@ -121,13 +119,12 @@ struct ContentView: View {
                             .cornerRadius(4)
                     }
                     
-                    // Canvas size
                     Text("\(Int(document.canvasSize.width)) × \(Int(document.canvasSize.height))")
                         .foregroundStyle(.secondary)
                 }
-                .font(.caption)  // Makes all text smaller
-                .controlSize(.large)  // Makes controls larger
-                .padding(.horizontal, 16) // Increase padding for liquid glass
+                .font(.caption)
+                .controlSize(.large)
+                .padding(.horizontal, 16)
             }
         }
         .onAppear {
@@ -174,9 +171,104 @@ struct ContentView: View {
                 height: $newHeight,
                 onResize: { w, h in
                     canvasLockedToWindow = false
-                    document.canvasSize = CGSize(width: w, height: h)
+                    resizeDocumentCanvas(to: CGSize(width: w, height: h))
                 }
             )
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func isDocumentNew() -> Bool {
+        // A document is "new" if it has default size AND is a blank white canvas
+        guard document.canvasSize == splatrDocument.defaultSize else {
+            return false
+        }
+        
+        // Check if canvas data matches a blank canvas of default size
+        let blankData = splatrDocument.createBlankCanvas(size: splatrDocument.defaultSize)
+        return document.canvasData == blankData
+    }
+    
+    private func toggleLock() {
+        if canvasLockedToWindow {
+            // Unlocking: just change the flag, keep current canvas exactly as-is
+            canvasLockedToWindow = false
+        } else {
+            // Locking: resize canvas to fit current window
+            canvasLockedToWindow = true
+            if let size = lastGeometrySize {
+                let newCanvasSize = CGSize(
+                    width: floor(size.width / toolState.zoomLevel),
+                    height: floor(size.height / toolState.zoomLevel)
+                )
+                resizeDocumentCanvas(to: newCanvasSize)
+            }
+        }
+    }
+    
+    /// Resize the document's canvas, preserving existing content anchored to top-left
+    private func resizeDocumentCanvas(to newSize: CGSize) {
+        let oldSize = document.canvasSize
+        
+        // Don't resize if effectively the same
+        guard abs(oldSize.width - newSize.width) > 0.5 ||
+              abs(oldSize.height - newSize.height) > 0.5 else {
+            return
+        }
+        
+        // Load existing image
+        guard let oldImage = NSImage(data: document.canvasData) else {
+            // No valid image, create blank
+            document.canvasSize = newSize
+            document.canvasData = splatrDocument.createBlankCanvas(size: newSize)
+            return
+        }
+        
+        // Create new canvas
+        let newImage = NSImage(size: newSize)
+        newImage.lockFocus()
+        
+        // Fill with white
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: newSize).fill()
+        
+        // Draw old image anchored to TOP-LEFT (visually)
+        // NSImage coordinate system has origin at bottom-left
+        // So "top-left anchored" means we draw at (0, newHeight - oldHeight) when growing vertically
+        // and we crop from top of old image when shrinking
+        
+        let drawWidth = min(oldSize.width, newSize.width)
+        let drawHeight = min(oldSize.height, newSize.height)
+        
+        // Source rect: top-left portion of old image
+        // In NSImage coords, "top" is at y = oldSize.height
+        let sourceRect = NSRect(
+            x: 0,
+            y: oldSize.height - drawHeight,  // Start from top of old image
+            width: drawWidth,
+            height: drawHeight
+        )
+        
+        // Dest rect: top-left of new canvas
+        // In NSImage coords, "top" is at y = newSize.height
+        let destRect = NSRect(
+            x: 0,
+            y: newSize.height - drawHeight,  // Position at top of new canvas
+            width: drawWidth,
+            height: drawHeight
+        )
+        
+        oldImage.draw(in: destRect, from: sourceRect, operation: .copy, fraction: 1.0)
+        
+        newImage.unlockFocus()
+        
+        // Save to document
+        if let tiffData = newImage.tiffRepresentation,
+           let bitmap = NSBitmapImageRep(data: tiffData),
+           let pngData = bitmap.representation(using: .png, properties: [:]) {
+            document.canvasSize = newSize
+            document.canvasData = pngData
         }
     }
     
@@ -191,6 +283,7 @@ struct ContentView: View {
             showResizeHandles: showResizeHandles,
             onCanvasResize: { newSize in
                 canvasLockedToWindow = false
+                resizeDocumentCanvas(to: newSize)
             },
             onCanvasUpdate: { image in
                 toolState.navigatorImage = image
@@ -336,8 +429,6 @@ struct ResizeCanvasSheet: View {
     var onResize: (CGFloat, CGFloat) -> Void
     
     @Environment(\.dismiss) private var dismiss
-    @State private var maintainAspectRatio = false
-    @State private var originalAspectRatio: CGFloat = 1.0
     
     var body: some View {
         VStack(spacing: 20) {
