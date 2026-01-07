@@ -495,6 +495,8 @@ struct ToolPaletteView: View {
             }
         case .brush:
             VStack(spacing: 2) {
+                Text("Size: \(Int(state.brushSize.rounded(.down)))").font(.caption2).foregroundStyle(.secondary)
+                Slider(value: $state.brushSize, in: 2...20, step:1).frame(width: 50)
                 Text("Shape").font(.caption2).foregroundStyle(.secondary)
                 LazyVGrid(columns: [GridItem(.fixed(20)), GridItem(.fixed(20))], spacing: 2) {
                     ForEach(BrushShape.allCases, id: \.rawValue) { shape in
