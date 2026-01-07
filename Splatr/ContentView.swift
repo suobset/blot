@@ -8,6 +8,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// The main document view that hosts the canvas editor. It manages:
+/// - Zooming (including pinch zoom anchoring to cursor)
+/// - Canvas size locking (fit to window) vs custom size with optional scrolling
+/// - Menu/command notifications for image operations and export
+/// - Presenting a resize sheet for the canvas
 struct ContentView: View {
     @Binding var document: splatrDocument
     @ObservedObject var toolState = ToolPaletteState.shared
@@ -27,6 +32,8 @@ struct ContentView: View {
     
     var body: some View {
         GeometryReader { geometry in
+            // Choose between full-window fit, scrollable view, or centered canvas,
+            // depending on lock state and whether the zoomed canvas exceeds bounds.
             canvasContainer(for: geometry)
                 .background(Color(nsColor: canvasLockedToWindow ? .white : .controlBackgroundColor))
                 .gesture(pinchZoomGesture)
@@ -38,7 +45,9 @@ struct ContentView: View {
                 }
         }
         .toolbar { toolbar }
+        // Ensure palettes are visible when a document opens.
         .onAppear { ToolPaletteController.shared.showAllPalettes() }
+        // Keep body clean by centralizing NotificationCenter bindings.
         .modifier(CanvasNotificationsModifier(contentView: self))
         .sheet(isPresented: $showingResizeSheet) {
             ResizeCanvasSheet(
@@ -54,6 +63,8 @@ struct ContentView: View {
     
     // MARK: - Canvas Container
     
+    /// Chooses a container layout based on whether the canvas is locked to window size
+    /// and whether the zoomed canvas requires scrolling.
     @ViewBuilder
     private func canvasContainer(for geometry: GeometryProxy) -> some View {
         let canvasWidth = document.canvasSize.width * toolState.zoomLevel
@@ -63,12 +74,14 @@ struct ContentView: View {
         let needsScroll = canvasWidth > availableWidth || canvasHeight > availableHeight
         
         if canvasLockedToWindow {
+            // Fit canvas to window: the CanvasView is scaled and stretched to fill.
             canvasContent(showResizeHandles: false)
                 .frame(width: geometry.size.width, height: geometry.size.height)
                 .trackingMouse { location in
                     cursorLocation = location
                 }
         } else if needsScroll {
+            // When canvas exceeds the container, use a ScrollView that anchors zoom to the cursor.
             ZoomableScrollView(
                 zoomLevel: toolState.zoomLevel,
                 cursorLocation: cursorLocation,
@@ -82,6 +95,7 @@ struct ContentView: View {
                 cursorLocation = location
             }
         } else {
+            // Centered canvas with padding when it fits within the current window at zoom.
             canvasContent(showResizeHandles: true)
                 .frame(width: canvasWidth + canvasPadding, height: canvasHeight + canvasPadding)
                 .frame(width: geometry.size.width, height: geometry.size.height)
@@ -93,9 +107,12 @@ struct ContentView: View {
     
     // MARK: - Pinch Zoom Gesture
     
+    /// Two-finger pinch gesture that adjusts zoom continuously, and snaps to the nearest
+    /// predefined zoom level on end if within 15% of it.
     private var pinchZoomGesture: some Gesture {
         MagnificationGesture()
             .onChanged { scale in
+                // Establish base zoom at the start of a pinch gesture.
                 if pinchBaseZoom == 1.0 && toolState.zoomLevel != 1.0 {
                     pinchBaseZoom = toolState.zoomLevel
                 } else if pinchBaseZoom == 1.0 {
@@ -105,6 +122,7 @@ struct ContentView: View {
                 toolState.zoomLevel = min(max(newZoom, 0.25), 8.0)
             }
             .onEnded { scale in
+                // Snap to the nearest zoom level if close enough.
                 let finalZoom = pinchBaseZoom * scale
                 let clamped = min(max(finalZoom, 0.25), 8.0)
                 if let nearest = zoomLevels.min(by: { abs($0 - clamped) < abs($1 - clamped) }),
@@ -119,6 +137,7 @@ struct ContentView: View {
     
     // MARK: - Toolbar
     
+    /// Toolbar shows lock state, current tool, zoom controls, and canvas dimensions.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
@@ -154,6 +173,7 @@ struct ContentView: View {
         }
     }
     
+    /// Zoom control buttons with current zoom percentage display.
     private var zoomControlsView: some View {
         HStack(spacing: 4) {
             Button { zoomOut() } label: {
@@ -180,6 +200,7 @@ struct ContentView: View {
     
     // MARK: - Zoom Methods
     
+    /// Step to the next higher zoom level with a brief animation.
     func zoomIn() {
         if let next = zoomLevels.first(where: { $0 > toolState.zoomLevel }) {
             withAnimation(.easeOut(duration: 0.15)) {
@@ -188,6 +209,7 @@ struct ContentView: View {
         }
     }
     
+    /// Step to the next lower zoom level with a brief animation.
     func zoomOut() {
         if let prev = zoomLevels.last(where: { $0 < toolState.zoomLevel }) {
             withAnimation(.easeOut(duration: 0.15)) {
@@ -196,6 +218,7 @@ struct ContentView: View {
         }
     }
     
+    /// Reset zoom to 100%.
     func resetZoom() {
         withAnimation(.easeOut(duration: 0.15)) {
             toolState.zoomLevel = 1.0
@@ -204,6 +227,8 @@ struct ContentView: View {
     
     // MARK: - Geometry Handlers
     
+    /// When the view size changes and the canvas is locked to window size,
+    /// recompute the canvas size in pixels at the current zoom.
     private func handleGeometryChange(_ newSize: CGSize) {
         guard hasAppeared else { return }
         lastGeometrySize = newSize
@@ -213,6 +238,7 @@ struct ContentView: View {
                 width: floor(max(1, newSize.width / toolState.zoomLevel)),
                 height: floor(max(1, newSize.height / toolState.zoomLevel))
             )
+            // Avoid thrashing by only resizing when the change is meaningful.
             if abs(document.canvasSize.width - newCanvasSize.width) > 1 ||
                abs(document.canvasSize.height - newCanvasSize.height) > 1 {
                 resizeDocumentCanvas(to: newCanvasSize)
@@ -220,6 +246,8 @@ struct ContentView: View {
         }
     }
     
+    /// Initial setup: new documents start locked to window and get a blank canvas sized to fit.
+    /// Existing documents preserve their size and unlock from window.
     private func handleAppear(_ geometry: GeometryProxy) {
         lastGeometrySize = geometry.size
         let isNewDocument = isDocumentNew()
@@ -240,12 +268,15 @@ struct ContentView: View {
     
     // MARK: - Helper Methods
     
+    /// Heuristic to detect a “new” untitled document by comparing size and data to defaults.
     private func isDocumentNew() -> Bool {
         guard document.canvasSize == splatrDocument.defaultSize else { return false }
         let blankData = splatrDocument.createBlankCanvas(size: splatrDocument.defaultSize)
         return document.canvasData == blankData
     }
     
+    /// Toggle lock between “fit to window” and “custom size”. When locking,
+    /// resize the canvas to match current view size and zoom.
     private func toggleLock() {
         if canvasLockedToWindow {
             canvasLockedToWindow = false
@@ -261,12 +292,15 @@ struct ContentView: View {
         }
     }
     
+    /// Resizes the underlying canvas image to a new pixel size. Content is anchored
+    /// to the top-left corner and areas outside the old image are filled white.
     func resizeDocumentCanvas(to newSize: CGSize) {
         let oldSize = document.canvasSize
         guard abs(oldSize.width - newSize.width) > 0.5 ||
               abs(oldSize.height - newSize.height) > 0.5 else { return }
         
         guard let oldImage = NSImage(data: document.canvasData) else {
+            // If current data isn’t an image, just reset to a blank canvas.
             document.canvasSize = newSize
             document.canvasData = splatrDocument.createBlankCanvas(size: newSize)
             return
@@ -277,6 +311,7 @@ struct ContentView: View {
         NSColor.white.setFill()
         NSRect(origin: .zero, size: newSize).fill()
         
+        // Copy the overlapping area from old to new, anchored at top-left.
         let drawWidth = min(oldSize.width, newSize.width)
         let drawHeight = min(oldSize.height, newSize.height)
         let sourceRect = NSRect(x: 0, y: oldSize.height - drawHeight, width: drawWidth, height: drawHeight)
@@ -284,6 +319,7 @@ struct ContentView: View {
         oldImage.draw(in: destRect, from: sourceRect, operation: .copy, fraction: 1.0)
         newImage.unlockFocus()
         
+        // Persist as PNG data in the document model.
         if let tiffData = newImage.tiffRepresentation,
            let bitmap = NSBitmapImageRep(data: tiffData),
            let pngData = bitmap.representation(using: .png, properties: [:]) {
@@ -294,6 +330,8 @@ struct ContentView: View {
     
     // MARK: - Canvas Content
     
+    /// Embeds the CanvasView with all necessary bindings and callbacks.
+    /// The CanvasView is expected to handle drawing and tool interactions.
     private func canvasContent(showResizeHandles: Bool) -> some View {
         CanvasView(
             document: $document,
@@ -315,6 +353,7 @@ struct ContentView: View {
     
     // MARK: - Canvas Operations
     
+    /// Flips the canvas horizontally or vertically by drawing into a transformed context.
     func flipCanvas(horizontal: Bool) {
         guard let image = NSImage(data: document.canvasData) else { return }
         let newImage = NSImage(size: image.size)
@@ -338,6 +377,7 @@ struct ContentView: View {
         }
     }
     
+    /// Inverts all colors of the canvas using Core Image's CIColorInvert filter.
     func invertCanvasColors() {
         guard let image = NSImage(data: document.canvasData),
               let tiffData = image.tiffRepresentation,
@@ -358,16 +398,19 @@ struct ContentView: View {
         }
     }
     
+    /// Resets the canvas to a blank white image at its current size.
     func clearCanvas() {
         document.canvasData = splatrDocument.createBlankCanvas(size: document.canvasSize)
     }
     
+    /// Shows the canvas resize sheet with current dimensions pre-filled.
     func showResizeSheet() {
         newWidth = "\(Int(document.canvasSize.width))"
         newHeight = "\(Int(document.canvasSize.height))"
         showingResizeSheet = true
     }
     
+    /// Presents an NSSavePanel and writes the current canvas in a chosen bitmap format.
     func exportImage(as format: NSBitmapImageRep.FileType) {
         guard let image = NSImage(data: document.canvasData),
               let tiffData = image.tiffRepresentation,
@@ -388,6 +431,7 @@ struct ContentView: View {
         }
     }
     
+    /// Exports the current canvas as a single-page PDF sized to the canvas size.
     func exportAsPDF() {
         guard let image = NSImage(data: document.canvasData) else { return }
         let panel = NSSavePanel()
@@ -411,6 +455,7 @@ struct ContentView: View {
         }
     }
     
+    /// Map NSBitmapImageRep file types to Uniform Type Identifiers for NSSavePanel.
     private func formatToUTType(_ format: NSBitmapImageRep.FileType) -> UTType {
         switch format {
         case .png: return .png
@@ -422,6 +467,7 @@ struct ContentView: View {
         }
     }
     
+    /// File extension string for a given bitmap format.
     private func formatExtension(_ format: NSBitmapImageRep.FileType) -> String {
         switch format {
         case .png: return "png"
@@ -436,6 +482,8 @@ struct ContentView: View {
 
 // MARK: - Notifications Modifier (keeps body clean)
 
+/// A ViewModifier that subscribes to NotificationCenter events to trigger
+/// zoom, canvas operations, and export actions on ContentView.
 struct CanvasNotificationsModifier: ViewModifier {
     let contentView: ContentView
     
@@ -460,6 +508,7 @@ struct CanvasNotificationsModifier: ViewModifier {
 
 // MARK: - Zoom Notifications
 
+/// Additional notifications for zoom control (if you wire them into menus).
 extension Notification.Name {
     static let zoomIn = Notification.Name("zoomIn")
     static let zoomOut = Notification.Name("zoomOut")
@@ -468,6 +517,7 @@ extension Notification.Name {
 
 // MARK: - Resize Sheet
 
+/// A simple sheet to enter new canvas dimensions in pixels.
 struct ResizeCanvasSheet: View {
     @Binding var width: String
     @Binding var height: String
@@ -517,6 +567,8 @@ struct ResizeCanvasSheet: View {
 
 // MARK: - Mouse Tracking Modifier
 
+/// Adds an invisible NSView to track mouse movement in the view’s bounds and
+/// report coordinates (converted to a top-left origin) to the provided closure.
 struct MouseTrackingModifier: ViewModifier {
     let onMove: (CGPoint) -> Void
     
@@ -528,11 +580,14 @@ struct MouseTrackingModifier: ViewModifier {
 }
 
 extension View {
+    /// Convenience for adding mouse tracking to any SwiftUI view.
     func trackingMouse(onMove: @escaping (CGPoint) -> Void) -> some View {
         modifier(MouseTrackingModifier(onMove: onMove))
     }
 }
 
+/// NSViewRepresentable wrapper that installs an NSTrackingArea and forwards
+/// mouseMoved events to SwiftUI.
 struct MouseTrackingView: NSViewRepresentable {
     let onMove: (CGPoint) -> Void
     
@@ -566,6 +621,7 @@ struct MouseTrackingView: NSViewRepresentable {
         
         override func mouseMoved(with event: NSEvent) {
             let location = convert(event.locationInWindow, from: nil)
+            // Convert to top-left origin to match canvas coordinate expectations.
             onMove?(CGPoint(x: location.x, y: bounds.height - location.y))
         }
     }
@@ -573,6 +629,9 @@ struct MouseTrackingView: NSViewRepresentable {
 
 // MARK: - Zoomable ScrollView (anchors zoom to cursor)
 
+/// An NSScrollView wrapper that grows/shrinks content while keeping the pixel
+/// under the cursor stationary during zoom changes. This creates a natural
+/// zooming experience similar to professional editors.
 struct ZoomableScrollView<Content: View>: NSViewRepresentable {
     let zoomLevel: CGFloat
     let cursorLocation: CGPoint
@@ -621,7 +680,7 @@ struct ZoomableScrollView<Content: View>: NSViewRepresentable {
             context.coordinator.lastZoom = zoomLevel
         }
         
-        // Update document view size
+        // Update document view size after SwiftUI lays out content.
         DispatchQueue.main.async {
             if let documentView = scrollView.documentView,
                let hostingView = documentView.subviews.first as? NSHostingView<Content> {
@@ -631,6 +690,8 @@ struct ZoomableScrollView<Content: View>: NSViewRepresentable {
         }
     }
     
+    /// Adjusts the scroll origin to keep the same content pixel under the cursor
+    /// across zoom level changes.
     private func anchorZoom(scrollView: NSScrollView, oldZoom: CGFloat, newZoom: CGFloat, context: Context) {
         guard let clipView = scrollView.contentView as? NSClipView else { return }
         
@@ -667,8 +728,10 @@ struct ZoomableScrollView<Content: View>: NSViewRepresentable {
         Coordinator()
     }
     
+    /// Coordinator stores last zoom and a reference to the scroll view.
     class Coordinator {
         var scrollView: NSScrollView?
         var lastZoom: CGFloat = 1.0
     }
 }
+

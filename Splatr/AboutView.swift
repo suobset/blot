@@ -7,13 +7,14 @@
 
 import SwiftUI
 
+/// Simple About panel content showing app icon, name, version, author, links, and license.
 struct AboutView: View {
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
                 .frame(height: 24)
             
-            // App Icon - load from bundle
+            // App Icon - load from bundle or fallback to application icon.
             if let iconImage = NSImage(named: "AppIcon") ?? NSApp.applicationIconImage {
                 Image(nsImage: iconImage)
                     .resizable()
@@ -31,7 +32,7 @@ struct AboutView: View {
             Spacer()
                 .frame(height: 4)
             
-            // Version
+            // Version (static here; could be wired to Bundle if preferred)
             Text("Version 1.0.0")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -106,10 +107,13 @@ struct AboutView: View {
     }
 }
 
+/// A small controller to manage the About window lifecycle and keep a strong
+/// reference to the NSWindow to prevent premature deallocation.
 class AboutWindowController {
     static let shared = AboutWindowController()
     private var aboutWindow: NSWindow?
     
+    /// Shows the About window, creating it if necessary, and brings the app to front.
     func showAboutWindow() {
         if let window = aboutWindow {
             window.makeKeyAndOrderFront(nil)
@@ -137,3 +141,4 @@ class AboutWindowController {
 #Preview {
     AboutView()
 }
+

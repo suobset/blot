@@ -10,22 +10,31 @@ import UniformTypeIdentifiers
 
 // Custom .splatr format
 extension UTType {
+    /// The Uniform Type Identifier for the app's custom document format.
+    /// Declared as exported type "com.splatr.drawing" in the app’s Info.plist.
     static var splatr: UTType {
         UTType(exportedAs: "com.splatr.drawing")
     }
 }
 
-// The splatrDocument File Format stores each canvas as a simple .splatr extension
-// We use most Xcode defaults for a Mac Document app, plus this app does not need
-// syncing or anything too fancy.
-// splatr's first 16 bytes are width and height data, followed by the PNG data.
-// If you splice off the first 16 bytes, all that remains is the Image data itself.
+/// The `splatrDocument` file format stores each canvas as a simple `.splatr` file.
+/// The file layout is:
+/// - First 8 bytes: width as Float64
+/// - Next 8 bytes: height as Float64
+/// - Remaining bytes: PNG data for the canvas image
+///
+/// This type also supports opening common image formats (PNG, JPEG, BMP, TIFF),
+/// and saving as PNG, JPEG, PDF, or `.splatr`.
 struct splatrDocument: FileDocument {
+    /// PNG data representing the canvas image.
     var canvasData: Data
+    /// Canvas size in pixels.
     var canvasSize: CGSize
     
+    /// Default size used for new blank documents before fitting to window.
     static let defaultSize = CGSize(width: 800, height: 600)
     
+    /// Create a new blank document with the specified size.
     init(size: CGSize = splatrDocument.defaultSize) {
         self.canvasSize = size
         self.canvasData = splatrDocument.createBlankCanvas(size: size)
@@ -37,6 +46,8 @@ struct splatrDocument: FileDocument {
     // Save as .splatr by default
     static var writableContentTypes: [UTType] { [.splatr, .png, .jpeg, .pdf] }
     
+    /// Initializes the document from a file on disk. Supports `.splatr` (custom header + PNG)
+    /// as well as standard bitmap image formats (converted to PNG internally).
     init(configuration: ReadConfiguration) throws {
         let contentType = configuration.contentType
         
@@ -66,6 +77,7 @@ struct splatrDocument: FileDocument {
             
             self.canvasSize = CGSize(width: bitmap.pixelsWide, height: bitmap.pixelsHigh)
             
+            // Normalize to PNG for internal storage.
             if let pngData = bitmap.representation(using: .png, properties: [:]) {
                 self.canvasData = pngData
             } else {
@@ -74,10 +86,10 @@ struct splatrDocument: FileDocument {
         }
     }
     
-    // fileWrapper handles incremental saving and managing of data without wasting too many read/write operations
-    // It returns in FileWrapper data type: Apple's abstraction for representing files or directories in memory,
-    // used primarily by the document architecture (NSDocument/UIDocument).
-    // It lets you work with file contents without immediately writing to disk.
+    /// Writes the document to disk using a `FileWrapper`, selecting format based on the
+    /// requested content type (splatr, jpeg, pdf, png).
+    ///
+    /// - Returns: A FileWrapper containing the encoded file contents.
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         let contentType = configuration.contentType
         
@@ -111,6 +123,7 @@ struct splatrDocument: FileDocument {
             outputData = jpegData
             
         case .pdf:
+            // Render the canvas image into a single-page PDF with the same size.
             let pdfData = NSMutableData()
             let consumer = CGDataConsumer(data: pdfData as CFMutableData)!
             var rect = CGRect(origin: .zero, size: canvasSize)
@@ -133,6 +146,7 @@ struct splatrDocument: FileDocument {
         return FileWrapper(regularFileWithContents: outputData)
     }
     
+    /// Creates a blank white PNG image of the given size and returns its data.
     static func createBlankCanvas(size: CGSize) -> Data {
         let image = NSImage(size: size)
         image.lockFocus()
@@ -149,3 +163,4 @@ struct splatrDocument: FileDocument {
         return pngData
     }
 }
+

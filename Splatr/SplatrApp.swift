@@ -7,26 +7,36 @@
 
 import SwiftUI
 
+/// The main application entry point for the macOS app.
+/// Uses the SwiftUI App lifecycle with an NSApplication delegate to manage
+/// welcome window behavior and floating palettes.
 @main
 struct splatrApp: App {
+    /// Bridge to AppKit lifecycle events and app-wide window management.
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     var body: some Scene {
-        
+        // DocumentGroup provides a full NSDocument-based document workflow
+        // using SwiftUI views. Each document window hosts a ContentView bound
+        // to a `splatrDocument` model.
         DocumentGroup(newDocument: splatrDocument()) { file in
             ContentView(document: file.$document)
                 .frame(minWidth: 640, minHeight: 480)
         }
         .defaultSize(width: 950, height: 750)
         .commands {
+            // Replace default About with our custom About window.
             CommandGroup(replacing: .appInfo) {
                 Button("About splatr") {
                     AboutWindowController.shared.showAboutWindow()
                 }
             }
             
+            // Export commands appear after Save in the File menu.
             CommandGroup(after: .saveItem) {
                 Menu("Export As") {
+                    // The ContentView listens to these notifications and
+                    // performs the corresponding export.
                     Button("PNG...") { NotificationCenter.default.post(name: .exportPNG, object: nil) }
                     Button("JPEG...") { NotificationCenter.default.post(name: .exportJPEG, object: nil) }
                     Button("TIFF...") { NotificationCenter.default.post(name: .exportTIFF, object: nil) }
@@ -36,6 +46,8 @@ struct splatrApp: App {
                 }
             }
             
+            // Custom Undo/Redo (explicitly using the key window's undo manager),
+            // plus a Clear Canvas command.
             CommandGroup(replacing: .undoRedo) {
                 Button("Undo") {
                     if let undoManager = NSApp.keyWindow?.undoManager, undoManager.canUndo {
@@ -59,6 +71,7 @@ struct splatrApp: App {
                 .keyboardShortcut(.delete, modifiers: [.command])
             }
             
+            // Palette toggles and visibility management.
             CommandGroup(after: .toolbar) {
                 Divider()
                 
@@ -95,6 +108,7 @@ struct splatrApp: App {
                 .keyboardShortcut("0", modifiers: [.command, .shift])
             }
             
+            // Dedicated Tools menu mirrors MS Paint-like tools with shortcuts.
             CommandMenu("Tools") {
                 Section("Selection") {
                     Button("Free-Form Select") { ToolPaletteState.shared.currentTool = .freeFormSelect }
@@ -145,6 +159,7 @@ struct splatrApp: App {
                 
                 Divider()
                 
+                // Brush size shortcuts mirror bracket keys commonly used in editors.
                 Button("Increase Brush Size") {
                     ToolPaletteState.shared.brushSize = min(50, ToolPaletteState.shared.brushSize + 2)
                 }
@@ -156,7 +171,7 @@ struct splatrApp: App {
                 .keyboardShortcut("[", modifiers: [])
             }
             
-            // Format menu for text styling shortcuts
+            // Format menu for text styling shortcuts; toggles shared text state.
             CommandMenu("Format") {
                 Button("Bold") {
                     ToolPaletteState.shared.isBold.toggle()
@@ -193,6 +208,7 @@ struct splatrApp: App {
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             }
             
+            // Image menu publishes notifications ContentView reacts to with image ops.
             CommandMenu("Image") {
                 Button("Resize Canvas...") {
                     NotificationCenter.default.post(name: .resizeCanvas, object: nil)
@@ -223,6 +239,8 @@ struct splatrApp: App {
 }
 
 // MARK: - Notification Names
+/// Centralized Notification.Name definitions used across the app to trigger
+/// canvas operations and exports from menu items and commands.
 extension Notification.Name {
     static let clearCanvas = Notification.Name("clearCanvas")
     static let resizeCanvas = Notification.Name("resizeCanvas")
@@ -239,9 +257,13 @@ extension Notification.Name {
 }
 
 // MARK: - App Delegate
+/// App-wide behavior for welcome window and palette visibility, especially
+/// when all document windows close or app activation changes.
 class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Show the custom welcome window on launch and observe window closures
+        // so we can re-open the welcome window when all documents are closed.
         WelcomeWindowController.shared.show()
         NotificationCenter.default.addObserver(
             self,
@@ -251,6 +273,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    /// Called for any window closing; if it’s not the welcome window and no
+    /// other document windows remain, show the welcome window again.
     @objc func windowWillClose(_ notification: Notification) {
         guard let closingWindow = notification.object as? NSWindow else { return }
         
@@ -259,6 +283,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         
+        // Slight delay to allow NSDocumentController to update its state.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             // Check if any document windows exist
             let hasDocumentWindows = NSDocumentController.shared.documents.count > 0
@@ -273,22 +298,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     
+    /// Keep the app running after last window closed (we show welcome instead).
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
     }
     
+    /// Prevent auto-creating an untitled doc on launch; we control via welcome.
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
         return false
     }
     
+    /// When app becomes active, bring back palettes if they were visible.
     func applicationDidBecomeActive(_ notification: Notification) {
         ToolPaletteController.shared.showPalettesIfNeeded()
     }
     
+    /// When app resigns active, hide palettes temporarily.
     func applicationDidResignActive(_ notification: Notification) {
         ToolPaletteController.shared.hidePalettesTemporarily()
     }
     
+    /// If user clicks Dock icon with no visible windows, show welcome.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             WelcomeWindowController.shared.show()
@@ -296,6 +326,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
     
+    /// Defensive check: if no “normal” visible windows, trigger reopen behavior.
     func applicationDidUpdate(_ notification: Notification) {
         let visibleWindows = NSApp.windows.filter {
             $0.isVisible &&
@@ -309,3 +340,4 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 }
+
