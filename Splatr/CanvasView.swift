@@ -8,14 +8,25 @@
 import SwiftUI
 import AppKit
 
+/// SwiftUI wrapper for an AppKit-based canvas view that handles pixel drawing,
+/// tools (pencil, brush, eraser, airbrush, shapes, selection, text, color picker),
+/// resize handles, and undo integration. The view synchronizes with the document
+/// model and notifies the Navigator palette of updates.
 struct CanvasView: NSViewRepresentable {
     @Binding var document: splatrDocument
+    /// Foreground drawing color (converted from SwiftUI Color by the caller).
     var currentColor: NSColor
+    /// Base brush size (interpreted per tool).
     var brushSize: CGFloat
+    /// Currently selected tool from the shared tool palette state.
     var currentTool: Tool
+    /// Whether to render resize handles and accept resize drags.
     var showResizeHandles: Bool
+    /// Callback to request a canvas resize (delegated to ContentView).
     var onCanvasResize: (CGSize) -> Void
+    /// Callback to update the Navigator image after changes.
     var onCanvasUpdate: (NSImage) -> Void
+    /// Undo manager injected from SwiftUI environment for registration.
     @Environment(\.undoManager) var undoManager
     
     func makeNSView(context: Context) -> CanvasNSView {
@@ -33,20 +44,23 @@ struct CanvasView: NSViewRepresentable {
     }
     
     func updateNSView(_ nsView: CanvasNSView, context: Context) {
+        // Keep undo manager up-to-date for new windows/contexts.
         context.coordinator.undoManager = undoManager
         
+        // Propagate tool and UI state into the NSView.
         nsView.currentColor = currentColor
         nsView.brushSize = brushSize
         nsView.currentTool = currentTool
         nsView.showResizeHandles = showResizeHandles
         
-        // Check if document changed externally (undo, redo, clear, flip, etc.)
+        // Detect external document changes (undo/redo/clear/flip/etc.) and reload image.
         if nsView.documentDataHash != document.canvasData.hashValue ||
            nsView.canvasSize != document.canvasSize {
             // Don't notify during update - just reload the image
             nsView.reloadFromDocument(data: document.canvasData, size: document.canvasSize, notifyNavigator: false)
         }
         
+        // Request a redraw to reflect any state changes.
         nsView.setNeedsDisplay(nsView.bounds)
     }
     
@@ -54,6 +68,8 @@ struct CanvasView: NSViewRepresentable {
         Coordinator(document: $document, undoManager: undoManager, onCanvasResize: onCanvasResize, onCanvasUpdate: onCanvasUpdate)
     }
     
+    /// Mediates between the NSView and SwiftUI: writes to the document binding,
+    /// registers undo, and forwards callbacks to ContentView.
     class Coordinator {
         var document: Binding<splatrDocument>
         var undoManager: UndoManager?
@@ -67,21 +83,25 @@ struct CanvasView: NSViewRepresentable {
             self.onCanvasUpdate = onCanvasUpdate
         }
         
+        /// Saves new image data into the document and updates the Navigator without undo registration.
         func saveToDocument(_ data: Data, image: NSImage) {
             document.wrappedValue.canvasData = data
             onCanvasUpdate(image)
         }
         
+        /// Requests the outer SwiftUI view to perform a canvas resize.
         func requestCanvasResize(_ size: CGSize) {
             onCanvasResize(size)
         }
         
+        /// Updates the shared foreground color after a color pick operation.
         func colorPicked(_ color: NSColor) {
             DispatchQueue.main.async {
                 ToolPaletteState.shared.foregroundColor = Color(nsColor: color)
             }
         }
         
+        /// Saves new image data into the document and registers an undo operation.
         func saveWithUndo(newData: Data, image: NSImage, actionName: String) {
             guard let undoManager = undoManager else {
                 saveToDocument(newData, image: image)
@@ -91,6 +111,7 @@ struct CanvasView: NSViewRepresentable {
             let oldData = document.wrappedValue.canvasData
             guard oldData != newData else { return }
             
+            // Register undo to restore previous canvas data and navigator image.
             undoManager.registerUndo(withTarget: self) { [weak self] _ in
                 guard let self = self else { return }
                 self.document.wrappedValue.canvasData = oldData
@@ -106,12 +127,17 @@ struct CanvasView: NSViewRepresentable {
     }
 }
 
+/// AppKit canvas view that performs pixel-level drawing and previews.
+/// The view maintains an NSImage as backing store and draws previews for
+/// in-progress strokes, shapes, selections, etc. It communicates changes
+/// back through the CanvasView.Coordinator.
 class CanvasNSView: NSView {
     weak var delegate: CanvasView.Coordinator?
     
     // Canvas state - derived from document
     private var canvasImage: NSImage?
     var canvasSize: CGSize = CGSize(width: 800, height: 600)
+    /// Hash of the last saved document data to detect external changes.
     var documentDataHash: Int = 0
     
     // Tool state
@@ -126,17 +152,18 @@ class CanvasNSView: NSView {
         }
     }
     private var previousToolBeforePicker: Tool? = nil
+    /// Controls whether resize handles are drawn and interactive.
     var showResizeHandles: Bool = true
     
-    // Drawing state
+    // Drawing state (for strokes)
     private var currentPath: [NSPoint] = []
     private var lastPoint: NSPoint?
     
-    // Shape tools
+    // Shape tools (rectangle, ellipse, rounded rect, line)
     private var shapeStartPoint: NSPoint?
     private var shapeEndPoint: NSPoint?
     
-    // Curve tool
+    // Curve tool (quadratic-like using two control phases)
     private var curveBaseStart: NSPoint?
     private var curveBaseEnd: NSPoint?
     private var curveControlPoint1: NSPoint?
@@ -168,12 +195,14 @@ class CanvasNSView: NSView {
     private var airbrushLocation: NSPoint = .zero
     private var isAirbrushActive = false
     
+    /// Which handle/edge is being dragged during a resize gesture.
     enum ResizeEdge {
         case none, right, bottom, corner
     }
     
     override var acceptsFirstResponder: Bool { true }
     
+    /// Expand intrinsic size to include resize handle extents so SwiftUI can lay out correctly.
     override var intrinsicContentSize: NSSize {
         NSSize(width: canvasSize.width + (showResizeHandles ? handleSize : 0),
                height: canvasSize.height + (showResizeHandles ? handleSize : 0))
@@ -182,6 +211,8 @@ class CanvasNSView: NSView {
     // MARK: - Document Loading
     
     /// Reload canvas from document data - this is the ONLY way to set canvas content
+    /// from the outside. It constructs an NSImage of the document size and optionally
+    /// notifies the Navigator with the new image.
     func reloadFromDocument(data: Data, size: CGSize, notifyNavigator: Bool = true) {
         documentDataHash = data.hashValue
         canvasSize = size
@@ -192,7 +223,7 @@ class CanvasNSView: NSView {
         }
         
         if let image = NSImage(data: data) {
-            // Ensure image is rendered at correct size
+            // Ensure image is rendered at correct size (clear background to white).
             let sizedImage = NSImage(size: size)
             sizedImage.lockFocus()
             NSColor.white.setFill()
@@ -215,6 +246,7 @@ class CanvasNSView: NSView {
         setNeedsDisplay(bounds)
     }
     
+    /// Creates a white background image for the current canvas size.
     private func createBlankCanvas() {
         let image = NSImage(size: canvasSize)
         image.lockFocus()
@@ -226,6 +258,8 @@ class CanvasNSView: NSView {
     
     // MARK: - Drawing
     
+    /// Main draw routine: paints the canvas background, the backing image,
+    /// and all in-progress previews (stroke, shapes, selections, etc.).
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         
@@ -248,6 +282,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Renders the temporary stroke preview as the user drags with pencil/brush/eraser.
     private func drawCurrentStroke() {
         guard currentPath.count > 0 else { return }
         
@@ -274,6 +309,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Renders previews for line/rectangle/ellipse/rounded-rectangle as the user drags.
     private func drawShapePreview() {
         guard let start = shapeStartPoint, let end = shapeEndPoint else { return }
         guard [.line, .rectangle, .ellipse, .roundedRectangle].contains(currentTool) else { return }
@@ -304,6 +340,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Renders preview for the curve tool, progressing through phases as control points are chosen.
     private func drawCurvePreview() {
         guard currentTool == .curve else { return }
         
@@ -329,6 +366,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Renders preview for polygon tool as points are added and mouse moves.
     private func drawPolygonPreview() {
         guard currentTool == .polygon, polygonPoints.count > 0 else { return }
         
@@ -346,6 +384,7 @@ class CanvasNSView: NSView {
         path.stroke()
     }
     
+    /// Draws selection rectangle/image and free-form selection outline.
     private func drawSelection() {
         if currentTool == .freeFormSelect && freeFormPath.count > 1 {
             NSColor.gray.setStroke()
@@ -365,6 +404,7 @@ class CanvasNSView: NSView {
             selImage.draw(in: rect)
         }
         
+        // White and black dashed marching ants effect
         let path = NSBezierPath(rect: rect)
         path.lineWidth = 1
         NSColor.white.setStroke()
@@ -375,6 +415,7 @@ class CanvasNSView: NSView {
         path.stroke()
     }
     
+    /// Draws right, bottom, and corner resize handles next to the canvas.
     private func drawResizeHandles() {
         NSColor.controlAccentColor.setFill()
         
@@ -386,6 +427,7 @@ class CanvasNSView: NSView {
                      xRadius: 2, yRadius: 2).fill()
     }
     
+    /// Applies style (outline/filled) to a shape path for preview drawing.
     private func drawStyledShape(_ path: NSBezierPath, lineWidth: CGFloat) {
         path.lineWidth = lineWidth
         let style = ToolPaletteState.shared.shapeStyle
@@ -407,6 +449,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Mouse Events
     
+    /// Install tracking area to receive mouseMoved and cursor updates.
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach { removeTrackingArea($0) }
@@ -423,6 +466,7 @@ class CanvasNSView: NSView {
         updateCursor(at: convert(event.locationInWindow, from: nil))
     }
     
+    /// Switch cursor when hovering over resize handles; otherwise show crosshair for drawing.
     private func updateCursor(at point: NSPoint) {
         if showResizeHandles && resizeEdgeAt(point) != .none {
             switch resizeEdgeAt(point) {
@@ -436,6 +480,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Hit-tests which resize edge/handle is under the cursor.
     private func resizeEdgeAt(_ point: NSPoint) -> ResizeEdge {
         guard showResizeHandles else { return .none }
         
@@ -445,10 +490,12 @@ class CanvasNSView: NSView {
         return .none
     }
     
+    /// Begin drawing, selecting, or resizing based on tool and click location.
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         
+        // Check for resize handle drags first.
         if showResizeHandles {
             resizeEdge = resizeEdgeAt(point)
             if resizeEdge != .none {
@@ -516,6 +563,7 @@ class CanvasNSView: NSView {
         setNeedsDisplay(bounds)
     }
     
+    /// Update in-progress drawing/selection/shape as the mouse drags.
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         
@@ -528,6 +576,7 @@ class CanvasNSView: NSView {
         
         switch currentTool {
         case .pencil, .brush, .eraser:
+            // Interpolate intermediate points for smoother strokes.
             if let last = lastPoint {
                 let distance = hypot(p.x - last.x, p.y - last.y)
                 let steps = max(1, Int(distance / 2))
@@ -544,6 +593,7 @@ class CanvasNSView: NSView {
             airbrushLocation = p
             
         case .line, .rectangle, .ellipse, .roundedRectangle:
+            // Constrain with Shift to perfect square/circle/45-degree line.
             shapeEndPoint = event.modifierFlags.contains(.shift) ? constrainedPoint(from: shapeStartPoint!, to: p) : p
             setNeedsDisplay(bounds)
             
@@ -577,6 +627,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Finalize the operation for the current tool on mouse up.
     override func mouseUp(with event: NSEvent) {
         if isResizing {
             isResizing = false
@@ -636,6 +687,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Tool Implementations
     
+    /// Tool-specific effective stroke size.
     private func getDrawSize() -> CGFloat {
         switch currentTool {
         case .brush: return brushSize * 2.5
@@ -644,6 +696,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Commits the current stroke to the canvas image (with undo support).
     private func commitStroke() {
         guard currentPath.count > 0, let image = canvasImage else { return }
         
@@ -678,6 +731,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Airbrush
     
+    /// Starts a timer to periodically spray dots around the airbrush location.
     private func startAirbrush() {
         airbrushTimer?.invalidate()
         airbrushTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] _ in
@@ -686,6 +740,7 @@ class CanvasNSView: NSView {
         sprayAirbrush()
     }
     
+    /// Applies one "spray" by drawing random dots within a radius around the current location.
     private func sprayAirbrush() {
         guard isAirbrushActive, let image = canvasImage else { return }
         
@@ -716,6 +771,7 @@ class CanvasNSView: NSView {
         setNeedsDisplay(bounds)
     }
     
+    /// Stops the airbrush timer and saves the current sprayed state to the document.
     private func stopAirbrush() {
         isAirbrushActive = false
         airbrushTimer?.invalidate()
@@ -725,6 +781,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Shape Tools
     
+    /// Commits a line shape to the canvas image.
     private func commitLine() {
         guard let start = shapeStartPoint, let end = shapeEndPoint, let image = canvasImage else {
             resetShapeState()
@@ -749,6 +806,7 @@ class CanvasNSView: NSView {
         saveToDocument(actionName: "Line")
     }
     
+    /// Commits a rectangle/ellipse/rounded-rect shape to the canvas image with the current style.
     private func commitShape() {
         guard let start = shapeStartPoint, let end = shapeEndPoint, let image = canvasImage else {
             resetShapeState()
@@ -797,6 +855,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Curve Tool
     
+    /// First click: establish base line for curve.
     private func handleCurveMouseDown(at point: NSPoint) {
         if curvePhase == 0 {
             shapeStartPoint = point
@@ -804,6 +863,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Subsequent clicks: set control points and commit on final phase.
     private func handleCurveMouseUp(at point: NSPoint) {
         if curvePhase == 0 {
             curveBaseStart = shapeStartPoint
@@ -817,6 +877,7 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Draws the final curve using two control points and commits to the canvas.
     private func commitCurve(controlPoint2: NSPoint) {
         guard let start = curveBaseStart, let end = curveBaseEnd, let image = canvasImage else {
             resetCurveState()
@@ -840,6 +901,7 @@ class CanvasNSView: NSView {
         saveToDocument(actionName: "Curve")
     }
     
+    /// Resets curve state machine.
     private func resetCurveState() {
         curvePhase = 0
         curveBaseStart = nil
@@ -851,6 +913,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Polygon Tool
     
+    /// Closes and commits the polygon using the current style.
     private func commitPolygon() {
         guard polygonPoints.count >= 2, let image = canvasImage else {
             polygonPoints = []
@@ -891,6 +954,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Selection Tools
     
+    /// Begin moving a captured selection; if this is the first move, clear the original area.
     private func startMovingSelection(at point: NSPoint) {
         guard let rect = selectionRect else { return }
         isMovingSelection = true
@@ -902,12 +966,14 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Update the selection rect while dragging.
     private func moveSelection(to point: NSPoint) {
         guard var rect = selectionRect else { return }
         rect.origin = NSPoint(x: point.x - selectionOffset.x, y: point.y - selectionOffset.y)
         selectionRect = rect
     }
     
+    /// Converts a free-form outline into a rectangular selection and captures its contents.
     private func finalizeFreeFormSelection() {
         guard freeFormPath.count > 2 else {
             freeFormPath = []
@@ -924,6 +990,7 @@ class CanvasNSView: NSView {
         freeFormPath = []
     }
     
+    /// Captures the current selection rect from the canvas image into selectionImage.
     private func captureSelection() {
         guard let rect = selectionRect, rect.width > 0, rect.height > 0, let image = canvasImage else { return }
         
@@ -935,6 +1002,7 @@ class CanvasNSView: NSView {
         selectionImage = captured
     }
     
+    /// Commits the selection image back into the canvas at its current rect.
     private func commitSelection() {
         guard let rect = selectionRect, let selImage = selectionImage, let image = canvasImage else {
             selectionRect = nil
@@ -956,6 +1024,7 @@ class CanvasNSView: NSView {
         saveToDocument(actionName: "Move Selection")
     }
     
+    /// Clears a rectangular area to white (used when cutting/moving selection).
     private func clearRect(_ rect: NSRect) {
         guard let image = canvasImage else { return }
         
@@ -971,6 +1040,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Color Picker & Fill
     
+    /// Reads the pixel color at the given point and updates the foreground color.
     private func pickColor(at point: NSPoint) {
         guard let image = canvasImage,
               let tiffData = image.tiffRepresentation,
@@ -997,6 +1067,8 @@ class CanvasNSView: NSView {
         }
     }
     
+    /// Classic flood fill algorithm (stack-based) with a simple color tolerance,
+    /// starting at the clicked pixel.
     private func floodFill(at point: NSPoint) {
         guard let image = canvasImage,
               let tiffData = image.tiffRepresentation,
@@ -1047,6 +1119,7 @@ class CanvasNSView: NSView {
         setNeedsDisplay(bounds)
     }
     
+    /// Compares two NSColor values with a tolerance in deviceRGB space.
     private func colorsMatch(_ c1: NSColor, _ c2: NSColor) -> Bool {
         guard let rgb1 = c1.usingColorSpace(.deviceRGB),
               let rgb2 = c2.usingColorSpace(.deviceRGB) else { return false }
@@ -1058,6 +1131,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Magnifier
     
+    /// Zooms in or out by doubling/halving the zoom level via shared state.
     private func handleMagnifier(at point: NSPoint, zoomIn: Bool) {
         let state = ToolPaletteState.shared
         if zoomIn {
@@ -1069,6 +1143,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Text Tool
     
+    /// Places an NSTextField at the click point for inline text entry.
     private func handleTextTool(at point: NSPoint) {
         if let tf = textField {
             commitText()
@@ -1090,12 +1165,14 @@ class CanvasNSView: NSView {
         textField = tf
     }
     
+    /// Called when the user presses Return in the text field; commits text to image.
     @objc private func textFieldEntered(_ sender: NSTextField) {
         commitText()
         sender.removeFromSuperview()
         textField = nil
     }
     
+    /// Renders the text field's contents into the canvas image at the insertion point.
     private func commitText() {
         guard let tf = textField, let point = textInsertPoint, let image = canvasImage else { return }
         
@@ -1122,6 +1199,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Resize Handling
     
+    /// Responds to dragging on resize handles by requesting a new canvas size.
     private func handleResizeDrag(to point: NSPoint) {
         var newSize = canvasSize
         
@@ -1144,15 +1222,18 @@ class CanvasNSView: NSView {
     
     // MARK: - Helpers
     
+    /// Clamp a point to the canvas bounds.
     private func clamp(_ point: NSPoint) -> NSPoint {
         NSPoint(x: max(0, min(point.x, canvasSize.width)), y: max(0, min(point.y, canvasSize.height)))
     }
     
+    /// Construct a rect from two corner points.
     private func rectFromPoints(_ p1: NSPoint, _ p2: NSPoint) -> NSRect {
         NSRect(x: min(p1.x, p2.x), y: min(p1.y, p2.y),
                width: abs(p2.x - p1.x), height: abs(p2.y - p1.y))
     }
     
+    /// Constrain to square/circle or 45-degree line when holding Shift.
     private func constrainedPoint(from start: NSPoint, to end: NSPoint) -> NSPoint {
         let dx = abs(end.x - start.x)
         let dy = abs(end.y - start.y)
@@ -1161,11 +1242,14 @@ class CanvasNSView: NSView {
                        y: start.y + d * (end.y > start.y ? 1 : -1))
     }
     
+    /// Clears shape preview state.
     private func resetShapeState() {
         shapeStartPoint = nil
         shapeEndPoint = nil
     }
     
+    /// Serializes the current canvas image as PNG and saves to the document,
+    /// optionally registering an undo action with a descriptive name.
     private func saveToDocument(actionName: String?) {
         guard let image = canvasImage,
               let tiffData = image.tiffRepresentation,
@@ -1183,6 +1267,8 @@ class CanvasNSView: NSView {
 }
 
 // MARK: - Color Extension
+
+/// Convenience color comparison with tolerance in deviceRGB space.
 extension NSColor {
     func isClose(to other: NSColor?, tolerance: CGFloat = 0.1) -> Bool {
         guard let other = other,

@@ -10,6 +10,9 @@ import SwiftUI
 import Combine
 
 // MARK: - Tool Enum (All 16 MS Paint XP Tools)
+
+/// Enumeration of all tools the app exposes, with display names,
+/// SF Symbols icons, and shortcut string for help tooltips.
 enum Tool: String, CaseIterable, Identifiable {
     case freeFormSelect = "Free-Form Select"
     case rectangleSelect = "Select"
@@ -30,6 +33,7 @@ enum Tool: String, CaseIterable, Identifiable {
     
     var id: String { rawValue }
     
+    /// SF Symbols name to represent each tool in the palette UI.
     var icon: String {
         switch self {
         case .freeFormSelect: return "lasso"
@@ -51,6 +55,7 @@ enum Tool: String, CaseIterable, Identifiable {
         }
     }
     
+    /// Human-readable shortcut hint for tooltips (not used for actual key handling here).
     var shortcut: String {
         switch self {
         case .freeFormSelect: return "S"
@@ -74,6 +79,8 @@ enum Tool: String, CaseIterable, Identifiable {
 }
 
 // MARK: - Shape Style (for shape tools)
+
+/// Shape rendering modes for shape tools.
 enum ShapeStyle: Int, CaseIterable {
     case outline = 0
     case filledWithOutline = 1
@@ -81,6 +88,8 @@ enum ShapeStyle: Int, CaseIterable {
 }
 
 // MARK: - Brush Shape
+
+/// Brush tip shapes for the brush tool.
 enum BrushShape: Int, CaseIterable {
     case circle = 0
     case square = 1
@@ -89,6 +98,10 @@ enum BrushShape: Int, CaseIterable {
 }
 
 // MARK: - Shared State
+
+/// Singleton observable state for tools/palettes used across the app.
+/// This provides a single source of truth for the currently selected tool,
+/// colors, brush attributes, text attributes, and navigator image.
 class ToolPaletteState: ObservableObject {
     static let shared = ToolPaletteState()
     
@@ -124,6 +137,8 @@ class ToolPaletteState: ObservableObject {
         loadCustomColors()
     }
     
+    /// Adds a custom color to the palette, avoiding duplicates and keeping
+    /// the list bounded to `maxCustomColors`.
     func addCustomColor(_ color: Color) {
         // Don't add duplicates
         if customColors.contains(where: { colorsAreEqual($0, color) }) {
@@ -137,6 +152,8 @@ class ToolPaletteState: ObservableObject {
         }
     }
     
+    /// Compares two SwiftUI Colors in deviceRGB space with a tolerance,
+    /// to handle floating-point differences.
     private func colorsAreEqual(_ c1: Color, _ c2: Color) -> Bool {
         let ns1 = NSColor(c1).usingColorSpace(.deviceRGB)
         let ns2 = NSColor(c2).usingColorSpace(.deviceRGB)
@@ -146,6 +163,7 @@ class ToolPaletteState: ObservableObject {
                abs(ns1.blueComponent - ns2.blueComponent) < 0.01
     }
     
+    /// Persists custom colors to UserDefaults as RGBA component arrays.
     private func saveCustomColors() {
         let colorData = customColors.compactMap { color -> [CGFloat]? in
             guard let nsColor = NSColor(color).usingColorSpace(.deviceRGB) else { return nil }
@@ -154,6 +172,7 @@ class ToolPaletteState: ObservableObject {
         UserDefaults.standard.set(colorData, forKey: customColorsKey)
     }
     
+    /// Loads custom colors from UserDefaults.
     private func loadCustomColors() {
         guard let colorData = UserDefaults.standard.array(forKey: customColorsKey) as? [[CGFloat]] else { return }
         customColors = colorData.map { components in
@@ -163,6 +182,10 @@ class ToolPaletteState: ObservableObject {
 }
 
 // MARK: - Palette Controller
+
+/// Manages creation and visibility of floating palettes (tools, colors, navigator,
+/// text options, custom colors) as NSPanels. Also coordinates showing/hiding in response
+/// to app activation and current tool selection.
 class ToolPaletteController {
     static let shared = ToolPaletteController()
     
@@ -181,6 +204,7 @@ class ToolPaletteController {
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
+        // Automatically show text options when the Text tool is selected.
         ToolPaletteState.shared.$currentTool
             .sink { [weak self] tool in
                 if tool == .text {
@@ -190,6 +214,7 @@ class ToolPaletteController {
             .store(in: &cancellables)
     }
     
+    /// Convenience for creating consistent floating utility panels.
     private func createPanel(title: String, rect: NSRect) -> NSPanel {
         let panel = NSPanel(
             contentRect: rect,
@@ -208,6 +233,7 @@ class ToolPaletteController {
         return panel
     }
     
+    /// Shows all palettes that make sense for the current tool selection.
     func showAllPalettes() {
         toolPaletteVisible = true
         colorPaletteVisible = true
@@ -223,6 +249,7 @@ class ToolPaletteController {
         }
     }
     
+    /// Hides all palettes and marks them as not visible.
     func hideAllPalettes() {
         toolPaletteVisible = false
         colorPaletteVisible = false
@@ -236,6 +263,7 @@ class ToolPaletteController {
         customColorsWindow?.orderOut(nil)
     }
     
+    /// Re-shows palettes that were previously visible when the app becomes active.
     func showPalettesIfNeeded() {
         if toolPaletteVisible { toolPaletteWindow?.orderFront(nil) }
         if colorPaletteVisible { colorPaletteWindow?.orderFront(nil) }
@@ -244,6 +272,7 @@ class ToolPaletteController {
         if customColorsVisible { customColorsWindow?.orderFront(nil) }
     }
     
+    /// Temporarily hides palettes when the app resigns active.
     func hidePalettesTemporarily() {
         toolPaletteWindow?.orderOut(nil)
         colorPaletteWindow?.orderOut(nil)
@@ -252,6 +281,7 @@ class ToolPaletteController {
         customColorsWindow?.orderOut(nil)
     }
     
+    /// Shows the Tools palette as a floating NSPanel.
     func showToolPalette() {
         toolPaletteVisible = true
         if let window = toolPaletteWindow {
@@ -266,6 +296,7 @@ class ToolPaletteController {
         toolPaletteWindow = panel
     }
     
+    /// Shows the Colors palette as a floating NSPanel.
     func showColorPalette() {
         colorPaletteVisible = true
         if let window = colorPaletteWindow {
@@ -279,6 +310,7 @@ class ToolPaletteController {
         colorPaletteWindow = panel
     }
     
+    /// Shows the Navigator palette (preview image) as a floating NSPanel.
     func showNavigator() {
         navigatorVisible = true
         if let window = navigatorWindow {
@@ -294,6 +326,7 @@ class ToolPaletteController {
         navigatorWindow = panel
     }
     
+    /// Shows the Text Options palette as a floating NSPanel.
     func showTextOptions() {
         textOptionsVisible = true
         if let window = textOptionsWindow {
@@ -310,11 +343,13 @@ class ToolPaletteController {
         textOptionsWindow = panel
     }
     
+    /// Hides the Text Options palette and marks it as not visible.
     func hideTextOptions() {
         textOptionsVisible = false
         textOptionsWindow?.orderOut(nil)
     }
     
+    /// Toggles Text Options palette visibility.
     func toggleTextOptions() {
         if textOptionsVisible {
             hideTextOptions()
@@ -323,6 +358,7 @@ class ToolPaletteController {
         }
     }
     
+    /// Shows the Custom Colors palette as a floating NSPanel.
     func showCustomColors() {
         customColorsVisible = true
         if let window = customColorsWindow {
@@ -337,11 +373,13 @@ class ToolPaletteController {
         customColorsWindow = panel
     }
     
+    /// Hides the Custom Colors palette and marks it as not visible.
     func hideCustomColors() {
         customColorsVisible = false
         customColorsWindow?.orderOut(nil)
     }
     
+    /// Toggles Custom Colors palette visibility.
     func toggleCustomColors() {
         if customColorsVisible {
             hideCustomColors()
@@ -352,6 +390,8 @@ class ToolPaletteController {
 }
 
 // MARK: - Text Options Panel Delegate
+
+/// Tracks Text Options panel lifecycle to keep controller visibility flags in sync.
 class TextOptionsPanelDelegate: NSObject, NSWindowDelegate {
     static let shared = TextOptionsPanelDelegate()
     
@@ -361,6 +401,8 @@ class TextOptionsPanelDelegate: NSObject, NSWindowDelegate {
 }
 
 // MARK: - Custom Colors Panel Delegate
+
+/// Tracks Custom Colors panel lifecycle to keep controller visibility flags in sync.
 class CustomColorsPanelDelegate: NSObject, NSWindowDelegate {
     static let shared = CustomColorsPanelDelegate()
     
@@ -370,9 +412,13 @@ class CustomColorsPanelDelegate: NSObject, NSWindowDelegate {
 }
 
 // MARK: - Text Options View
+
+/// UI for choosing text font, size, styles, and previewing result.
+/// Binds to the shared ToolPaletteState.
 struct TextOptionsView: View {
     @ObservedObject var state = ToolPaletteState.shared
     
+    /// A small curated font list for convenience.
     let availableFonts = [
         "Helvetica", "Helvetica Neue", "Arial", "Times New Roman",
         "Georgia", "Verdana", "Courier New", "Monaco",
@@ -380,10 +426,12 @@ struct TextOptionsView: View {
         "Palatino", "Optima", "Gill Sans", "Baskerville"
     ].sorted()
     
+    /// Common font sizes.
     let fontSizes: [CGFloat] = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64, 72, 96]
     
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // Font picker
             VStack(alignment: .leading, spacing: 4) {
                 Text("Font").font(.caption).foregroundStyle(.secondary)
                 Picker("", selection: $state.fontName) {
@@ -395,6 +443,7 @@ struct TextOptionsView: View {
                 .frame(maxWidth: .infinity)
             }
             
+            // Size picker + stepper
             VStack(alignment: .leading, spacing: 4) {
                 Text("Size").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 4) {
@@ -410,6 +459,7 @@ struct TextOptionsView: View {
                 }
             }
             
+            // Styles toggles
             VStack(alignment: .leading, spacing: 4) {
                 Text("Style").font(.caption).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
@@ -422,6 +472,7 @@ struct TextOptionsView: View {
                 }
             }
             
+            // Live preview reflects current settings.
             VStack(alignment: .leading, spacing: 4) {
                 Text("Preview").font(.caption).foregroundStyle(.secondary)
                 Text("AaBbCc")
@@ -442,9 +493,13 @@ struct TextOptionsView: View {
 }
 
 // MARK: - Tool Palette View
+
+/// Grid of tool buttons and a compact options area that changes depending
+/// on the selected tool (e.g., brush size, line width, shape style).
 struct ToolPaletteView: View {
     @ObservedObject var state = ToolPaletteState.shared
     
+    /// 8 rows × 2 columns to mirror classic MS Paint layout.
     let toolRows: [[Tool]] = [
         [.freeFormSelect, .rectangleSelect],
         [.eraser, .fill],
@@ -458,6 +513,7 @@ struct ToolPaletteView: View {
     
     var body: some View {
         VStack(spacing: 4) {
+            // Tool buttons
             ForEach(0..<toolRows.count, id: \.self) { row in
                 HStack(spacing: 2) {
                     ForEach(toolRows[row]) { tool in
@@ -469,6 +525,7 @@ struct ToolPaletteView: View {
             }
             
             Divider().padding(.vertical, 4)
+            // Contextual options for the current tool
             toolOptionsView
             Spacer()
         }
@@ -476,6 +533,7 @@ struct ToolPaletteView: View {
         .frame(width: 66, height: 420)
     }
     
+    /// Small contextual UI for the selected tool.
     @ViewBuilder
     var toolOptionsView: some View {
         switch state.currentTool {
@@ -552,6 +610,7 @@ struct ToolPaletteView: View {
         }
     }
     
+    /// Simple icons to visualize brush shapes.
     func brushShapeIcon(_ shape: BrushShape) -> some View {
         Canvas { context, size in
             let rect = CGRect(origin: .zero, size: size).insetBy(dx: 3, dy: 3)
@@ -572,6 +631,7 @@ struct ToolPaletteView: View {
         }
     }
     
+    /// Simple icons to visualize shape styles.
     func shapeStyleIcon(_ style: ShapeStyle) -> some View {
         Canvas { context, size in
             let rect = CGRect(origin: .zero, size: size).insetBy(dx: 4, dy: 4)
@@ -586,6 +646,7 @@ struct ToolPaletteView: View {
     }
 }
 
+/// Small tool button with selection highlighting and help tooltip.
 struct ToolButton: View {
     let tool: Tool
     let isSelected: Bool
@@ -604,10 +665,14 @@ struct ToolButton: View {
 }
 
 // MARK: - Color Palette View
+
+/// The main color palette showing foreground/background swatches,
+/// a default color grid, and a button to show the custom colors palette.
 struct ColorPaletteView: View {
     @ObservedObject var state = ToolPaletteState.shared
     @State private var showingColorPicker = false
     
+    // Two rows of default colors reminiscent of classic palettes.
     let topColors: [Color] = [
         Color(nsColor: NSColor(red: 0, green: 0, blue: 0, alpha: 1)),
         Color(nsColor: NSColor(red: 128/255, green: 128/255, blue: 128/255, alpha: 1)),
@@ -653,6 +718,7 @@ struct ColorPaletteView: View {
             }
             .frame(width: 34, height: 34)
             .onTapGesture(count: 2) {
+                // Double-click swaps colors.
                 let temp = state.foregroundColor
                 state.foregroundColor = state.backgroundColor
                 state.backgroundColor = temp
@@ -698,6 +764,9 @@ struct ColorPaletteView: View {
 }
 
 // MARK: - Color Picker with Custom Save
+
+/// A ColorPicker that automatically saves newly chosen colors into the shared
+/// custom colors list (with duplicate suppression).
 struct ColorPickerWithCustomSave: View {
     @Binding var selection: Color
     @ObservedObject var state = ToolPaletteState.shared
@@ -719,6 +788,7 @@ struct ColorPickerWithCustomSave: View {
             }
     }
     
+    /// Local color equality with a tolerance to avoid noisy re-saves.
     private func colorsAreEqual(_ c1: Color, _ c2: Color) -> Bool {
         let ns1 = NSColor(c1).usingColorSpace(.deviceRGB)
         let ns2 = NSColor(c2).usingColorSpace(.deviceRGB)
@@ -730,6 +800,9 @@ struct ColorPickerWithCustomSave: View {
 }
 
 // MARK: - Custom Colors Palette View
+
+/// A compact palette that shows up to 28 custom colors in two rows,
+/// with a ColorPicker to add new ones and a button to clear all.
 struct CustomColorsPaletteView: View {
     @ObservedObject var state = ToolPaletteState.shared
     
@@ -809,6 +882,8 @@ struct CustomColorsPaletteView: View {
     }
 }
 
+/// An interactive color swatch that can set foreground (left click),
+/// background (Ctrl-click), or be removed via context menu.
 struct CustomColorGridButton: View {
     let color: Color
     let index: Int
@@ -843,6 +918,7 @@ struct CustomColorGridButton: View {
     }
 }
 
+/// Empty placeholder slot for the custom colors grid.
 struct EmptyColorSlot: View {
     var body: some View {
         Rectangle()
@@ -852,6 +928,7 @@ struct EmptyColorSlot: View {
     }
 }
 
+/// A default palette color swatch; left click sets foreground, Ctrl-click sets background.
 struct ColorGridButton: View {
     let color: Color
     @ObservedObject var state = ToolPaletteState.shared
@@ -865,6 +942,9 @@ struct ColorGridButton: View {
 }
 
 // MARK: - Navigator View
+
+/// Displays a live preview of the current canvas (if provided by the editor),
+/// typically scaled down, in a small floating panel.
 struct NavigatorView: View {
     @ObservedObject var state = ToolPaletteState.shared
     
@@ -882,3 +962,4 @@ struct NavigatorView: View {
         .frame(width: 180, height: 140)
     }
 }
+

@@ -9,7 +9,10 @@ import SwiftUI
 
 // MARK: - Welcome View
 
+/// A custom welcome window UI that lets users create a new canvas, open an existing
+/// image/document, or pick from a list of recent documents.
 struct WelcomeView: View {
+    /// Uses NSDocumentController to read recent documents maintained by the system.
     private var recentDocuments: [URL] {
         NSDocumentController.shared.recentDocumentURLs
     }
@@ -24,6 +27,7 @@ struct WelcomeView: View {
                     .frame(width: 280)
             }
             
+            // Custom close button that terminates the app (since this is a welcome window).
             CloseButton {
                 NSApp.terminate(nil)
             }
@@ -32,6 +36,7 @@ struct WelcomeView: View {
         }
         .frame(width: 640, height: 420)
         .background {
+            // Glassy background look combining material, color, and gradient.
             ZStack {
                 VisualEffectBlur(material: .sidebar, blendingMode: .behindWindow)
                 
@@ -51,6 +56,7 @@ struct WelcomeView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
+            // Subtle border for a polished look.
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(
                     LinearGradient(
@@ -71,10 +77,12 @@ struct WelcomeView: View {
     
     // MARK: - Left Panel
     
+    /// Left side contains branding (icon, name, version) and primary actions.
     private var leftPanel: some View {
         VStack(spacing: 0) {
             Spacer()
             
+            // App icon with a blurred shadow behind for depth.
             ZStack {
                 if let iconImage = NSImage(named: "AppIcon") ?? NSApp.applicationIconImage {
                     Image(nsImage: iconImage)
@@ -105,6 +113,7 @@ struct WelcomeView: View {
             
             Spacer().frame(height: 44)
             
+            // Primary actions.
             VStack(spacing: 8) {
                 GlassActionButton(
                     icon: "paintbrush",
@@ -119,6 +128,7 @@ struct WelcomeView: View {
                     title: "Open Existing Canvas/Image"
                 ) {
                     WelcomeWindowController.shared.close()
+                    // Small delay to allow welcome window to close before open panel.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                         NSDocumentController.shared.openDocument(nil)
                     }
@@ -132,6 +142,7 @@ struct WelcomeView: View {
     
     // MARK: - Right Panel
     
+    /// Right panel lists recent documents and allows opening them directly.
     private var rightPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Recent")
@@ -175,6 +186,7 @@ struct WelcomeView: View {
         }
     }
     
+    /// Shown when there are no recent documents.
     private var emptyState: some View {
         VStack {
             Spacer()
@@ -195,6 +207,8 @@ struct WelcomeView: View {
 
 // MARK: - Close Button
 
+/// A custom close button in the top-left that mirrors window controls,
+/// used to terminate the app from the welcome window.
 struct CloseButton: View {
     let action: () -> Void
     
@@ -223,6 +237,7 @@ struct CloseButton: View {
 
 // MARK: - Glass Action Button
 
+/// A glass-styled button used for primary actions on the welcome screen.
 struct GlassActionButton: View {
     let icon: String
     let title: String
@@ -284,6 +299,7 @@ struct GlassActionButton: View {
             }
         }
         .simultaneousGesture(
+            // Simple press animation feedback.
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in
                     withAnimation(.easeOut(duration: 0.1)) {
@@ -301,6 +317,8 @@ struct GlassActionButton: View {
 
 // MARK: - Glass File Row
 
+/// A recent document row with a preview thumbnail (when available) and path hint.
+/// Clicking opens the document and closes the welcome window.
 struct GlassFileRow: View {
     let url: URL
     let action: () -> Void
@@ -311,6 +329,7 @@ struct GlassFileRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
+                // Thumbnail or generic file icon.
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(.ultraThinMaterial)
@@ -367,6 +386,7 @@ struct GlassFileRow: View {
         }
     }
     
+    /// Attempts to load the file as an NSImage and produce a small preview.
     private func loadThumbnail() {
         DispatchQueue.global(qos: .userInitiated).async {
             if let image = NSImage(contentsOf: url) {
@@ -381,6 +401,7 @@ struct GlassFileRow: View {
 
 // MARK: - Visual Effect Blur
 
+/// Wrapper to use NSVisualEffectView from SwiftUI for glassy backgrounds.
 struct VisualEffectBlur: NSViewRepresentable {
     var material: NSVisualEffectView.Material
     var blendingMode: NSVisualEffectView.BlendingMode
@@ -401,10 +422,13 @@ struct VisualEffectBlur: NSViewRepresentable {
 
 // MARK: - Window Controller
 
+/// Manages the lifecycle of the custom welcome window. Keeps a reference to avoid
+/// deallocation and configures the window with a transparent titlebar and custom UI.
 class WelcomeWindowController {
     static let shared = WelcomeWindowController()
     private(set) var window: NSWindow?
     
+    /// Shows (or re-shows) the welcome window and activates the app.
     func show() {
         if let window = window, window.isVisible {
             window.makeKeyAndOrderFront(nil)
@@ -438,6 +462,7 @@ class WelcomeWindowController {
         self.window = window
     }
     
+    /// Closes the welcome window if it exists.
     func close() {
         window?.close()
     }
@@ -446,6 +471,7 @@ class WelcomeWindowController {
 // MARK: - Helpers
 
 extension Bundle {
+    /// Returns a user-friendly version string "X.Y.Z (Build)" from Info.plist.
     var appVersion: String {
         let version = infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         let build = infoDictionary?["CFBundleVersion"] as? String ?? "1"
@@ -454,6 +480,7 @@ extension Bundle {
 }
 
 extension NSImage {
+    /// Draws the image into a new NSImage of the specified size.
     func resized(to size: NSSize) -> NSImage {
         let newImage = NSImage(size: size)
         newImage.lockFocus()
@@ -474,3 +501,4 @@ extension NSImage {
     WelcomeView()
         .frame(width: 640, height: 420)
 }
+
