@@ -968,11 +968,15 @@ class CanvasNSView: NSView {
               let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData) else { return }
         
-        let x = Int(point.x)
-        let y = Int(canvasSize.height - point.y)
+        // Map view point (in points) to bitmap pixel coordinates (account for Retina/backing scale)
+        let scaleX = CGFloat(bitmap.pixelsWide) / image.size.width
+        let scaleY = CGFloat(bitmap.pixelsHigh) / image.size.height
         
-        guard x >= 0, x < bitmap.pixelsWide, y >= 0, y < bitmap.pixelsHigh,
-              let color = bitmap.colorAt(x: x, y: y) else { return }
+        let px = Int((point.x * scaleX).rounded(.down))
+        let py = Int(((canvasSize.height - point.y) * scaleY).rounded(.down))
+        
+        guard px >= 0, px < bitmap.pixelsWide, py >= 0, py < bitmap.pixelsHigh,
+              let color = bitmap.colorAt(x: px, y: py) else { return }
         
         delegate?.colorPicked(color)
     }
@@ -982,8 +986,12 @@ class CanvasNSView: NSView {
               let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData) else { return }
         
-        let startX = Int(point.x)
-        let startY = Int(canvasSize.height - point.y)
+        // Map start point to pixel space
+        let scaleX = CGFloat(bitmap.pixelsWide) / image.size.width
+        let scaleY = CGFloat(bitmap.pixelsHigh) / image.size.height
+        
+        let startX = Int((point.x * scaleX).rounded(.down))
+        let startY = Int(((canvasSize.height - point.y) * scaleY).rounded(.down))
         let width = bitmap.pixelsWide
         let height = bitmap.pixelsHigh
         
@@ -997,9 +1005,8 @@ class CanvasNSView: NSView {
         
         while !stack.isEmpty {
             let (x, y) = stack.removeLast()
-            let idx = y * width + x
-            
             if x < 0 || x >= width || y < 0 || y >= height { continue }
+            let idx = y * width + x
             if visited[idx] { continue }
             
             guard let pixelColor = bitmap.colorAt(x: x, y: y),
@@ -1013,6 +1020,9 @@ class CanvasNSView: NSView {
             stack.append((x, y + 1))
             stack.append((x, y - 1))
         }
+        
+        // Ensure the image rep reports the canvas size in points (keeps mapping consistent)
+        bitmap.size = canvasSize
         
         let newImage = NSImage(size: canvasSize)
         newImage.addRepresentation(bitmap)
@@ -1168,3 +1178,4 @@ extension NSColor {
                abs(c1.blueComponent - c2.blueComponent) < tolerance
     }
 }
+
