@@ -963,3 +963,13 @@ struct NavigatorView: View {
     }
 }
 
+/// Preview
+#Preview {
+    ToolPaletteView()
+}
+
+#Preview {
+    ColorPaletteView()
+    CustomColorsPaletteView()
+    NavigatorView()
+}

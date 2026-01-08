@@ -179,6 +179,9 @@ class CanvasNSView: NSView {
     private var isMovingSelection = false
     private var selectionOffset: NSPoint = .zero
     private var freeFormPath: [NSPoint] = []
+    // New: true free-form selection path and tracking of its position
+    private var selectionPath: NSBezierPath?
+    private var lastSelectionOrigin: NSPoint?
     
     // Text tool
     private var textField: NSTextField?
@@ -386,7 +389,8 @@ class CanvasNSView: NSView {
     
     /// Draws selection rectangle/image and free-form selection outline.
     private func drawSelection() {
-        if currentTool == .freeFormSelect && freeFormPath.count > 1 {
+        // In-progress freehand path drawing (before capture)
+        if currentTool == .freeFormSelect && freeFormPath.count > 1 && selectionImage == nil && selectionPath == nil {
             NSColor.gray.setStroke()
             let path = NSBezierPath()
             path.lineWidth = 1
@@ -398,21 +402,30 @@ class CanvasNSView: NSView {
             path.stroke()
         }
         
-        guard let rect = selectionRect else { return }
-        
-        if let selImage = selectionImage {
-            selImage.draw(in: rect)
+        // Draw selection image if present
+        if let rect = selectionRect, let selImage = selectionImage {
+            selImage.draw(in: rect, from: NSRect(origin: .zero, size: rect.size), operation: .sourceOver, fraction: 1.0)
         }
         
-        // White and black dashed marching ants effect
-        let path = NSBezierPath(rect: rect)
-        path.lineWidth = 1
-        NSColor.white.setStroke()
-        path.stroke()
-        
-        path.setLineDash([4, 4], count: 2, phase: CGFloat(CACurrentMediaTime() * 10).truncatingRemainder(dividingBy: 8))
-        NSColor.black.setStroke()
-        path.stroke()
+        // Draw marching ants: prefer free-form path if available, else rect
+        if let path = selectionPath {
+            let ants = path.copy() as! NSBezierPath
+            ants.lineWidth = 1
+            NSColor.white.setStroke()
+            ants.stroke()
+            let phase = CGFloat(CACurrentMediaTime() * 10).truncatingRemainder(dividingBy: 8)
+            ants.setLineDash([4, 4], count: 2, phase: phase)
+            NSColor.black.setStroke()
+            ants.stroke()
+        } else if let rect = selectionRect {
+            let path = NSBezierPath(rect: rect)
+            path.lineWidth = 1
+            NSColor.white.setStroke()
+            path.stroke()
+            path.setLineDash([4, 4], count: 2, phase: CGFloat(CACurrentMediaTime() * 10).truncatingRemainder(dividingBy: 8))
+            NSColor.black.setStroke()
+            path.stroke()
+        }
     }
     
     /// Draws right, bottom, and corner resize handles next to the canvas.
@@ -543,11 +556,20 @@ class CanvasNSView: NSView {
             shapeEndPoint = p
             
         case .freeFormSelect:
-            if let rect = selectionRect, rect.contains(p) {
+            // If we already have a captured selection, hit-test path for moving
+            if let path = selectionPath, path.contains(p) {
+                startMovingSelection(at: p)
+            } else if let rect = selectionRect, selectionPath == nil, rect.contains(p) {
+                // Rectangle selection active (from rectangleSelect tool) but current tool is free form
                 startMovingSelection(at: p)
             } else {
+                // Start a new freehand path
                 commitSelection()
                 freeFormPath = [p]
+                selectionPath = nil
+                selectionRect = nil
+                selectionImage = nil
+                isMovingSelection = false
             }
             
         case .rectangleSelect:
@@ -557,6 +579,7 @@ class CanvasNSView: NSView {
                 commitSelection()
                 shapeStartPoint = p
                 shapeEndPoint = p
+                selectionPath = nil
             }
         }
         
@@ -959,39 +982,59 @@ class CanvasNSView: NSView {
         guard let rect = selectionRect else { return }
         isMovingSelection = true
         selectionOffset = NSPoint(x: point.x - rect.origin.x, y: point.y - rect.origin.y)
+        lastSelectionOrigin = rect.origin
         
+        // On first move, clear original area. For free-form, clear only masked area.
         if selectionImage != nil && originalSelectionRect == nil {
             originalSelectionRect = rect
-            clearRect(rect)
+            if let path = selectionPath {
+                clearPath(path)
+            } else {
+                clearRect(rect)
+            }
         }
     }
     
-    /// Update the selection rect while dragging.
+    /// Update the selection rect while dragging (and translate path if present).
     private func moveSelection(to point: NSPoint) {
         guard var rect = selectionRect else { return }
-        rect.origin = NSPoint(x: point.x - selectionOffset.x, y: point.y - selectionOffset.y)
+        let newOrigin = NSPoint(x: point.x - selectionOffset.x, y: point.y - selectionOffset.y)
+        if let oldOrigin = lastSelectionOrigin, let path = selectionPath {
+            let dx = newOrigin.x - oldOrigin.x
+            let dy = newOrigin.y - oldOrigin.y
+            let transform = AffineTransform(translationByX: dx, byY: dy)
+            path.transform(using: transform)
+            lastSelectionOrigin = newOrigin
+        }
+        rect.origin = newOrigin
         selectionRect = rect
     }
     
-    /// Converts a free-form outline into a rectangular selection and captures its contents.
+    /// Converts a free-form outline into a true masked selection and captures its contents.
     private func finalizeFreeFormSelection() {
         guard freeFormPath.count > 2 else {
             freeFormPath = []
             return
         }
         
-        let xs = freeFormPath.map { $0.x }
-        let ys = freeFormPath.map { $0.y }
-        let rect = NSRect(x: xs.min()!, y: ys.min()!,
-                          width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+        // Build a closed bezier path from points
+        let path = NSBezierPath()
+        path.move(to: freeFormPath[0])
+        for i in 1..<freeFormPath.count { path.line(to: freeFormPath[i]) }
+        path.close()
+        selectionPath = path
         
-        selectionRect = rect
-        captureSelection()
+        // Compute tight bounds
+        let bounds = path.bounds
+        selectionRect = bounds
+        captureSelection(using: path)
         freeFormPath = []
+        lastSelectionOrigin = bounds.origin
     }
     
     /// Captures the current selection rect from the canvas image into selectionImage.
     private func captureSelection() {
+        // Rectangle selection capture (legacy)
         guard let rect = selectionRect, rect.width > 0, rect.height > 0, let image = canvasImage else { return }
         
         let captured = NSImage(size: rect.size)
@@ -1000,6 +1043,57 @@ class CanvasNSView: NSView {
         captured.unlockFocus()
         
         selectionImage = captured
+        selectionPath = nil
+        lastSelectionOrigin = rect.origin
+    }
+    
+    /// Captures selection using a free-form mask (alpha outside the path).
+    private func captureSelection(using path: NSBezierPath) {
+        guard let image = canvasImage else { return }
+        let bounds = path.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        
+        // Create an offscreen bitmap with alpha
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(ceil(bounds.width)),
+            pixelsHigh: Int(ceil(bounds.height)),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return }
+        rep.size = bounds.size
+        
+        NSGraphicsContext.saveGraphicsState()
+        if let ctx = NSGraphicsContext(bitmapImageRep: rep) {
+            NSGraphicsContext.current = ctx
+            
+            // Clear to transparent
+            NSColor.clear.setFill()
+            NSBezierPath(rect: NSRect(origin: .zero, size: bounds.size)).fill()
+            
+            // Clip to translated path and draw image from canvas region
+            let translated = path.copy() as! NSBezierPath
+            let t = AffineTransform(translationByX: -bounds.origin.x, byY: -bounds.origin.y)
+            translated.transform(using: t)
+            translated.addClip()
+            
+            image.draw(in: NSRect(origin: .zero, size: bounds.size),
+                       from: bounds,
+                       operation: .sourceOver,
+                       fraction: 1.0)
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        
+        let captured = NSImage(size: bounds.size)
+        captured.addRepresentation(rep)
+        selectionImage = captured
+        selectionRect = bounds
+        lastSelectionOrigin = bounds.origin
     }
     
     /// Commits the selection image back into the canvas at its current rect.
@@ -1008,19 +1102,23 @@ class CanvasNSView: NSView {
             selectionRect = nil
             selectionImage = nil
             originalSelectionRect = nil
+            selectionPath = nil
+            lastSelectionOrigin = nil
             return
         }
         
         let newImage = NSImage(size: canvasSize)
         newImage.lockFocus()
         image.draw(in: NSRect(origin: .zero, size: canvasSize))
-        selImage.draw(in: rect)
+        selImage.draw(in: rect, from: NSRect(origin: .zero, size: rect.size), operation: .sourceOver, fraction: 1.0)
         newImage.unlockFocus()
         
         canvasImage = newImage
         selectionRect = nil
         selectionImage = nil
         originalSelectionRect = nil
+        selectionPath = nil
+        lastSelectionOrigin = nil
         saveToDocument(actionName: "Move Selection")
     }
     
@@ -1035,6 +1133,21 @@ class CanvasNSView: NSView {
         rect.fill()
         newImage.unlockFocus()
         
+        canvasImage = newImage
+    }
+    
+    /// Clears a free-form path area to white (used when cutting/moving selection).
+    private func clearPath(_ path: NSBezierPath) {
+        guard let image = canvasImage else { return }
+        let newImage = NSImage(size: canvasSize)
+        newImage.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: canvasSize))
+        NSGraphicsContext.current?.saveGraphicsState()
+        path.addClip()
+        NSColor.white.setFill()
+        NSBezierPath(rect: NSRect(origin: .zero, size: canvasSize)).fill()
+        NSGraphicsContext.current?.restoreGraphicsState()
+        newImage.unlockFocus()
         canvasImage = newImage
     }
     
@@ -1187,7 +1300,6 @@ class CanvasNSView: NSView {
             .font: tf.font ?? NSFont.systemFont(ofSize: 14),
             .foregroundColor: currentColor
         ]
-        
         let attrString = NSAttributedString(string: text, attributes: attrs)
         attrString.draw(at: point)
         
