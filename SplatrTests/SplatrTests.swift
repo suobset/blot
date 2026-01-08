@@ -6,7 +6,7 @@
 //
 
 import XCTest
-@testable import splatr
+@testable import Splatr
 import SwiftUI
 import UniformTypeIdentifiers
 
