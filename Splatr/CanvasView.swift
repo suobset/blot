@@ -183,11 +183,22 @@ class CanvasNSView: NSView {
     private var selectionPath: NSBezierPath?
     private var lastSelectionOrigin: NSPoint?
     
+    // Transform/handles
+    private enum SelectionHandle {
+        case none, topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left, rotate
+    }
+    private var activeHandle: SelectionHandle = .none
+    private var transformStartRect: NSRect?
+    private var transformOriginalImage: NSImage?
+    private var transformOriginalPath: NSBezierPath?
+    private var transformStartAngle: CGFloat = 0
+    private var lastMousePoint: NSPoint = .zero
+    
     // Text tool
     private var textField: NSTextField?
     private var textInsertPoint: NSPoint?
     
-    // Resize handles
+    // Canvas resize handles (outside canvas)
     private var isResizing = false
     private var resizeEdge: ResizeEdge = .none
     private var resizeStartSize: CGSize = .zero
@@ -440,7 +451,7 @@ class CanvasNSView: NSView {
         path.stroke()
     }
     
-    /// Draws selection rectangle/image and free-form selection outline.
+    /// Draws selection rectangle/image, marching ants/path, and interactive handles.
     private func drawSelection() {
         // In-progress freehand path drawing (before capture)
         if currentTool == .freeFormSelect && freeFormPath.count > 1 && selectionImage == nil && selectionPath == nil {
@@ -478,6 +489,11 @@ class CanvasNSView: NSView {
             path.setLineDash([4, 4], count: 2, phase: CGFloat(CACurrentMediaTime() * 10).truncatingRemainder(dividingBy: 8))
             NSColor.black.setStroke()
             path.stroke()
+        }
+        
+        // Draw transform handles if a floating selection exists
+        if let rect = selectionRect, selectionImage != nil {
+            drawSelectionHandles(rect)
         }
     }
     
@@ -525,11 +541,15 @@ class CanvasNSView: NSView {
     }
     
     override func cursorUpdate(with event: NSEvent) {
-        updateCursor(at: convert(event.locationInWindow, from: nil))
+        let p = convert(event.locationInWindow, from: nil)
+        lastMousePoint = clamp(p)
+        updateCursor(at: lastMousePoint)
     }
     
     override func mouseMoved(with event: NSEvent) {
-        updateCursor(at: convert(event.locationInWindow, from: nil))
+        let p = convert(event.locationInWindow, from: nil)
+        lastMousePoint = clamp(p)
+        updateCursor(at: lastMousePoint)
     }
     
     /// Switch cursor when hovering over resize handles; otherwise show crosshair for drawing.
@@ -539,14 +559,26 @@ class CanvasNSView: NSView {
             case .right: NSCursor.resizeLeftRight.set()
             case .bottom: NSCursor.resizeUpDown.set()
             case .corner: NSCursor.crosshair.set()
+            case .none: break
+            }
+            return
+        }
+        // Selection handle cursors
+        if let rect = selectionRect, selectionImage != nil {
+            let handle = handleAt(point, in: rect)
+            switch handle {
+            case .left, .right: NSCursor.resizeLeftRight.set(); return
+            case .top, .bottom: NSCursor.resizeUpDown.set(); return
+            //case .topLeft, .bottomRight: NSCursor..set(); return
+            //case .topRight, .bottomLeft: NSCursor.resizeDiagonalUpLeftRight.set(); return
+            case .rotate: NSCursor.crosshair.set(); return
             default: break
             }
-        } else {
-            NSCursor.crosshair.set()
         }
+        NSCursor.crosshair.set()
     }
     
-    /// Hit-tests which resize edge/handle is under the cursor.
+    /// Hit-tests which canvas resize edge/handle is under the cursor.
     private func resizeEdgeAt(_ point: NSPoint) -> ResizeEdge {
         guard showResizeHandles else { return .none }
         
@@ -556,17 +588,29 @@ class CanvasNSView: NSView {
         return .none
     }
     
-    /// Begin drawing, selecting, or resizing based on tool and click location.
+    /// Begin drawing, selecting, transforming, or resizing based on tool and click location.
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         
-        // Check for resize handle drags first.
+        // Track last mouse
+        lastMousePoint = clamp(point)
+        
+        // Check for canvas resize handle drags first.
         if showResizeHandles {
             resizeEdge = resizeEdgeAt(point)
             if resizeEdge != .none {
                 isResizing = true
                 resizeStartSize = canvasSize
+                return
+            }
+        }
+        
+        // If there is a floating selection, check transform handles first
+        if let rect = selectionRect, selectionImage != nil {
+            let handle = handleAt(lastMousePoint, in: rect)
+            if handle != .none {
+                beginTransform(handle: handle, at: lastMousePoint)
                 return
             }
         }
@@ -609,15 +653,13 @@ class CanvasNSView: NSView {
             shapeEndPoint = p
             
         case .freeFormSelect:
-            // If we already have a captured selection, hit-test path for moving
+            // If we already have a captured selection, hit-test path or rect for moving
             if let path = selectionPath, path.contains(p) {
                 startMovingSelection(at: p)
             } else if let rect = selectionRect, selectionPath == nil, rect.contains(p) {
-                // Rectangle selection active (from rectangleSelect tool) but current tool is free form
                 startMovingSelection(at: p)
             } else {
-                // Start a new freehand path
-                // If combining (Shift/Option), keep existing selection floating
+                // Start a new freehand path (unless combining, then keep existing)
                 if !(event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option)) {
                     commitSelection()
                     selectionImage = nil
@@ -646,12 +688,20 @@ class CanvasNSView: NSView {
         setNeedsDisplay(bounds)
     }
     
-    /// Update in-progress drawing/selection/shape as the mouse drags.
+    /// Update in-progress drawing/selection/shape/transform as the mouse drags.
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        lastMousePoint = clamp(point)
         
         if isResizing {
             handleResizeDrag(to: point)
+            return
+        }
+        
+        // Transforming floating selection
+        if activeHandle != .none {
+            updateTransform(to: lastMousePoint)
+            setNeedsDisplay(bounds)
             return
         }
         
@@ -676,7 +726,6 @@ class CanvasNSView: NSView {
             airbrushLocation = p
             
         case .line, .rectangle, .ellipse, .roundedRectangle:
-            // Constrain with Shift to perfect square/circle/45-degree line.
             shapeEndPoint = event.modifierFlags.contains(.shift) ? constrainedPoint(from: shapeStartPoint!, to: p) : p
             setNeedsDisplay(bounds)
             
@@ -710,11 +759,17 @@ class CanvasNSView: NSView {
         }
     }
     
-    /// Finalize the operation for the current tool on mouse up.
+    /// Finalize the operation for the current tool or transform on mouse up.
     override func mouseUp(with event: NSEvent) {
         if isResizing {
             isResizing = false
             resizeEdge = .none
+            return
+        }
+        
+        if activeHandle != .none {
+            endTransform()
+            setNeedsDisplay(bounds)
             return
         }
         
@@ -1322,7 +1377,7 @@ class CanvasNSView: NSView {
         pb.setData(png, forType: .png)
     }
     
-    /// Paste PNG or image from NSPasteboard as a new floating selection.
+    /// Paste PNG or image from NSPasteboard as a new floating selection at cursor.
     @objc private func pasteFromPasteboard() {
         let pb = NSPasteboard.general
         var pastedImage: NSImage?
@@ -1333,9 +1388,13 @@ class CanvasNSView: NSView {
         }
         guard let img = pastedImage else { return }
         
-        // Place at top-left (or center) as a new floating selection
+        // Place centered at last mouse point, clamped to canvas
         let size = img.size
-        let origin = NSPoint(x: min(10, max(0, canvasSize.width - size.width)), y: min(canvasSize.height - size.height - 10, max(0, canvasSize.height - size.height)))
+        var origin = NSPoint(x: lastMousePoint.x - size.width / 2,
+                             y: lastMousePoint.y - size.height / 2)
+        origin.x = max(0, min(origin.x, canvasSize.width - size.width))
+        origin.y = max(0, min(origin.y, canvasSize.height - size.height))
+        
         selectionImage = img
         selectionRect = NSRect(origin: origin, size: size)
         selectionPath = nil
@@ -1446,6 +1505,199 @@ class CanvasNSView: NSView {
             lastSelectionOrigin = rect.origin
         }
         setNeedsDisplay(bounds)
+    }
+    
+    // MARK: - Selection Handles (resize/rotate)
+    
+    /// Draws square handles at corners/sides and a rotate handle above the top center.
+    private func drawSelectionHandles(_ rect: NSRect) {
+        let handleRadius: CGFloat = 4
+        NSColor.controlAccentColor.setFill()
+        
+        for frame in handleFrames(for: rect) {
+            NSBezierPath(ovalIn: frame).fill()
+        }
+        
+        // Rotate handle: small circle above top-center with a line
+        let rotateFrame = rotateHandleFrame(for: rect)
+        NSColor.secondaryLabelColor.setStroke()
+        let line = NSBezierPath()
+        line.move(to: NSPoint(x: rect.midX, y: rect.maxY))
+        line.line(to: NSPoint(x: rect.midX, y: rotateFrame.midY))
+        line.lineWidth = 1
+        line.stroke()
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(ovalIn: rotateFrame).fill()
+    }
+    
+    /// Returns frames for 8 resize handles (corners + sides).
+    private func handleFrames(for rect: NSRect) -> [NSRect] {
+        let s: CGFloat = 8
+        let half = s / 2
+        let points: [NSPoint] = [
+            NSPoint(x: rect.minX, y: rect.maxY), // topLeft
+            NSPoint(x: rect.midX, y: rect.maxY), // top
+            NSPoint(x: rect.maxX, y: rect.maxY), // topRight
+            NSPoint(x: rect.maxX, y: rect.midY), // right
+            NSPoint(x: rect.maxX, y: rect.minY), // bottomRight
+            NSPoint(x: rect.midX, y: rect.minY), // bottom
+            NSPoint(x: rect.minX, y: rect.minY), // bottomLeft
+            NSPoint(x: rect.minX, y: rect.midY)  // left
+        ]
+        return points.map { NSRect(x: $0.x - half, y: $0.y - half, width: s, height: s) }
+    }
+    
+    /// Frame for the rotate handle above the top center.
+    private func rotateHandleFrame(for rect: NSRect) -> NSRect {
+        let s: CGFloat = 10
+        let gap: CGFloat = 18
+        return NSRect(x: rect.midX - s/2, y: rect.maxY + gap, width: s, height: s)
+    }
+    
+    /// Which selection handle is at a given point.
+    private func handleAt(_ point: NSPoint, in rect: NSRect) -> SelectionHandle {
+        let frames = handleFrames(for: rect)
+        let names: [SelectionHandle] = [.topLeft, .top, .topRight, .right, .bottomRight, .bottom, .bottomLeft, .left]
+        for (i, f) in frames.enumerated() where f.contains(point) {
+            return names[i]
+        }
+        if rotateHandleFrame(for: rect).contains(point) { return .rotate }
+        return .none
+    }
+    
+    /// Begin a transform gesture on the floating selection.
+    private func beginTransform(handle: SelectionHandle, at point: NSPoint) {
+        guard let rect = selectionRect else { return }
+        activeHandle = handle
+        transformStartRect = rect
+        transformOriginalImage = selectionImage
+        transformOriginalPath = selectionPath?.copy() as? NSBezierPath
+        if handle == .rotate {
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            transformStartAngle = atan2(point.y - center.y, point.x - center.x)
+        }
+    }
+    
+    /// Update transform during drag.
+    private func updateTransform(to point: NSPoint) {
+        guard let startRect = transformStartRect, let originalImage = transformOriginalImage else { return }
+        
+        switch activeHandle {
+        case .rotate:
+            guard var rect = selectionRect else { return }
+            let center = NSPoint(x: startRect.midX, y: startRect.midY)
+            let angleNow = atan2(point.y - center.y, point.x - center.x)
+            let delta = angleNow - transformStartAngle
+            // Compute new bounding size for rotated rect
+            let w = startRect.size.width
+            let h = startRect.size.height
+            let absCos = abs(cos(delta))
+            let absSin = abs(sin(delta))
+            let newSize = NSSize(width: w * absCos + h * absSin, height: w * absSin + h * absCos)
+            // Render rotated image into new bounds
+            let rotated = NSImage(size: newSize)
+            rotated.lockFocus()
+            let t = NSAffineTransform()
+            t.translateX(by: newSize.width / 2, yBy: newSize.height / 2)
+            t.rotate(byRadians: delta)
+            t.translateX(by: -w / 2, yBy: -h / 2)
+            t.concat()
+            originalImage.draw(in: NSRect(origin: .zero, size: startRect.size))
+            rotated.unlockFocus()
+            selectionImage = rotated
+            // Rotate path if present
+            if let basePath = transformOriginalPath?.copy() as? NSBezierPath {
+                let path = basePath
+                var aff = AffineTransform(translationByX: -center.x, byY: -center.y)
+                path.transform(using: aff)
+                aff = AffineTransform(rotationByRadians: delta)
+                path.transform(using: aff)
+                aff = AffineTransform(translationByX: center.x, byY: center.y)
+                path.transform(using: aff)
+                selectionPath = path
+                rect = path.bounds
+            } else {
+                // Keep center fixed, update rect size
+                rect.size = newSize
+                rect.origin = NSPoint(x: center.x - newSize.width/2, y: center.y - newSize.height/2)
+            }
+            selectionRect = rect
+            lastSelectionOrigin = rect.origin
+            
+        case .topLeft, .top, .topRight, .right, .bottomRight, .bottom, .bottomLeft, .left:
+            var newRect = startRect
+            // Adjust rect edges based on handle
+            switch activeHandle {
+            case .topLeft:
+                newRect.origin.x = min(point.x, startRect.maxX - 1)
+                newRect.size.width = max(1, startRect.maxX - newRect.origin.x)
+                newRect.size.height = max(1, point.y - startRect.minY)
+            case .top:
+                newRect.size.height = max(1, point.y - startRect.minY)
+            case .topRight:
+                newRect.size.width = max(1, point.x - startRect.minX)
+                newRect.size.height = max(1, point.y - startRect.minY)
+            case .right:
+                newRect.size.width = max(1, point.x - startRect.minX)
+            case .bottomRight:
+                newRect.size.width = max(1, point.x - startRect.minX)
+                newRect.origin.y = min(point.y, startRect.maxY - 1)
+                newRect.size.height = max(1, startRect.maxY - newRect.origin.y)
+            case .bottom:
+                newRect.origin.y = min(point.y, startRect.maxY - 1)
+                newRect.size.height = max(1, startRect.maxY - newRect.origin.y)
+            case .bottomLeft:
+                newRect.origin.x = min(point.x, startRect.maxX - 1)
+                newRect.size.width = max(1, startRect.maxX - newRect.origin.x)
+                newRect.origin.y = min(point.y, startRect.maxY - 1)
+                newRect.size.height = max(1, startRect.maxY - newRect.origin.y)
+            case .left:
+                newRect.origin.x = min(point.x, startRect.maxX - 1)
+                newRect.size.width = max(1, startRect.maxX - newRect.origin.x)
+            default: break
+            }
+            // Clamp within canvas
+            newRect.origin.x = max(0, min(newRect.origin.x, canvasSize.width - newRect.size.width))
+            newRect.origin.y = max(0, min(newRect.origin.y, canvasSize.height - newRect.size.height))
+            // Scale image from original to newRect size
+            let scaled = NSImage(size: newRect.size)
+            scaled.lockFocus()
+            originalImage.draw(in: NSRect(origin: .zero, size: newRect.size), from: NSRect(origin: .zero, size: startRect.size), operation: .sourceOver, fraction: 1.0)
+            scaled.unlockFocus()
+            selectionImage = scaled
+            // Scale path if present around center
+            if let basePath = transformOriginalPath?.copy() as? NSBezierPath {
+                let sx = newRect.size.width / startRect.size.width
+                let sy = newRect.size.height / startRect.size.height
+                let center = NSPoint(x: startRect.midX, y: startRect.midY)
+                let path = basePath
+                var aff = AffineTransform(translationByX: -center.x, byY: -center.y)
+                path.transform(using: aff)
+                aff = AffineTransform(scaleByX: sx, byY: sy)
+                path.transform(using: aff)
+                aff = AffineTransform(translationByX: center.x, byY: center.y)
+                path.transform(using: aff)
+                // Also translate if origin moved (to keep top-left anchored appropriately)
+                let delta = NSPoint(x: newRect.midX - startRect.midX, y: newRect.midY - startRect.midY)
+                aff = AffineTransform(translationByX: delta.x, byY: delta.y)
+                path.transform(using: aff)
+                selectionPath = path
+            }
+            selectionRect = newRect
+            lastSelectionOrigin = newRect.origin
+            
+        case .none:
+            break
+        }
+    }
+    
+    /// End transform gesture.
+    private func endTransform() {
+        activeHandle = .none
+        transformStartRect = nil
+        transformOriginalImage = nil
+        transformOriginalPath = nil
+        transformStartAngle = 0
     }
     
     // MARK: - Color Picker & Fill
@@ -1606,9 +1858,9 @@ class CanvasNSView: NSView {
         saveToDocument(actionName: "Text")
     }
     
-    // MARK: - Resize Handling
+    // MARK: - Canvas Resize Handling
     
-    /// Responds to dragging on resize handles by requesting a new canvas size.
+    /// Responds to dragging on canvas resize handles by requesting a new canvas size.
     private func handleResizeDrag(to point: NSPoint) {
         var newSize = canvasSize
         
