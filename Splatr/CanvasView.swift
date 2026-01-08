@@ -179,7 +179,7 @@ class CanvasNSView: NSView {
     private var isMovingSelection = false
     private var selectionOffset: NSPoint = .zero
     private var freeFormPath: [NSPoint] = []
-    // New: true free-form selection path and tracking of its position
+    // True free-form selection path and tracking of its position
     private var selectionPath: NSBezierPath?
     private var lastSelectionOrigin: NSPoint?
     
@@ -203,7 +203,60 @@ class CanvasNSView: NSView {
         case none, right, bottom, corner
     }
     
+    // Selection combination mode
+    private enum SelectionCombineMode { case replace, add, subtract }
+    
     override var acceptsFirstResponder: Bool { true }
+    
+    /// Provide a context menu with selection operations.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let menu = NSMenu()
+        let hasSelection = (selectionRect != nil && selectionImage != nil)
+        menu.addItem(withTitle: "Copy", action: #selector(copySelection), keyEquivalent: "")
+        menu.items.last?.isEnabled = hasSelection
+        menu.addItem(withTitle: "Paste", action: #selector(pasteFromPasteboard), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "Delete", action: #selector(deleteSelectionAction), keyEquivalent: "")
+        menu.items.last?.isEnabled = hasSelection
+        menu.addItem(NSMenuItem.separator())
+        let rotateCW = NSMenuItem(title: "Rotate 90° CW", action: #selector(rotateCWAction), keyEquivalent: "")
+        rotateCW.isEnabled = hasSelection
+        menu.addItem(rotateCW)
+        let rotateCCW = NSMenuItem(title: "Rotate 90° CCW", action: #selector(rotateCCWAction), keyEquivalent: "")
+        rotateCCW.isEnabled = hasSelection
+        menu.addItem(rotateCCW)
+        menu.addItem(NSMenuItem.separator())
+        let scaleUp = NSMenuItem(title: "Scale 200%", action: #selector(scaleUpAction), keyEquivalent: "")
+        scaleUp.isEnabled = hasSelection
+        menu.addItem(scaleUp)
+        let scaleDown = NSMenuItem(title: "Scale 50%", action: #selector(scaleDownAction), keyEquivalent: "")
+        scaleDown.isEnabled = hasSelection
+        menu.addItem(scaleDown)
+        return menu
+    }
+    
+    /// Handle keyboard shortcuts for selection operations.
+    override func keyDown(with event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let chars = event.charactersIgnoringModifiers ?? ""
+        if flags.contains(.command) {
+            switch chars.lowercased() {
+            case "c": copySelection()
+            case "v": pasteFromPasteboard()
+            case "]": rotateSelection(clockwise: true)
+            case "[": rotateSelection(clockwise: false)
+            case "=": scaleSelection(by: 1.1)
+            case "-": scaleSelection(by: 0.9)
+            default: super.keyDown(with: event)
+            }
+            return
+        }
+        if chars == String(UnicodeScalar(NSDeleteCharacter)!) || chars == String(UnicodeScalar(NSBackspaceCharacter)!) {
+            deleteSelectionAction()
+            return
+        }
+        super.keyDown(with: event)
+    }
     
     /// Expand intrinsic size to include resize handle extents so SwiftUI can lay out correctly.
     override var intrinsicContentSize: NSSize {
@@ -564,11 +617,14 @@ class CanvasNSView: NSView {
                 startMovingSelection(at: p)
             } else {
                 // Start a new freehand path
-                commitSelection()
+                // If combining (Shift/Option), keep existing selection floating
+                if !(event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option)) {
+                    commitSelection()
+                    selectionImage = nil
+                    selectionRect = nil
+                    selectionPath = nil
+                }
                 freeFormPath = [p]
-                selectionPath = nil
-                selectionRect = nil
-                selectionImage = nil
                 isMovingSelection = false
             }
             
@@ -576,10 +632,14 @@ class CanvasNSView: NSView {
             if let rect = selectionRect, rect.contains(p) {
                 startMovingSelection(at: p)
             } else {
-                commitSelection()
+                if !(event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option)) {
+                    commitSelection()
+                    selectionPath = nil
+                    selectionImage = nil
+                    selectionRect = nil
+                }
                 shapeStartPoint = p
                 shapeEndPoint = p
-                selectionPath = nil
             }
         }
         
@@ -659,6 +719,9 @@ class CanvasNSView: NSView {
         }
         
         let p = clamp(convert(event.locationInWindow, from: nil))
+        let add = event.modifierFlags.contains(.shift)
+        let subtract = event.modifierFlags.contains(.option)
+        let mode: SelectionCombineMode = subtract ? .subtract : (add ? .add : .replace)
         
         switch currentTool {
         case .pencil, .brush, .eraser:
@@ -689,15 +752,15 @@ class CanvasNSView: NSView {
             if isMovingSelection {
                 isMovingSelection = false
             } else if freeFormPath.count > 2 {
-                finalizeFreeFormSelection()
+                finalizeFreeFormSelection(mode: mode)
             }
             
         case .rectangleSelect:
             if isMovingSelection {
                 isMovingSelection = false
             } else if let start = shapeStartPoint {
-                selectionRect = rectFromPoints(start, p)
-                captureSelection()
+                let rect = rectFromPoints(start, p)
+                finalizeRectangleSelection(rect: rect, mode: mode)
                 shapeStartPoint = nil
                 shapeEndPoint = nil
             }
@@ -1010,41 +1073,122 @@ class CanvasNSView: NSView {
         selectionRect = rect
     }
     
-    /// Converts a free-form outline into a true masked selection and captures its contents.
-    private func finalizeFreeFormSelection() {
+    /// Finalize free-form selection with combination mode.
+    private func finalizeFreeFormSelection(mode: SelectionCombineMode) {
         guard freeFormPath.count > 2 else {
             freeFormPath = []
             return
         }
-        
         // Build a closed bezier path from points
-        let path = NSBezierPath()
-        path.move(to: freeFormPath[0])
-        for i in 1..<freeFormPath.count { path.line(to: freeFormPath[i]) }
-        path.close()
-        selectionPath = path
-        
-        // Compute tight bounds
-        let bounds = path.bounds
-        selectionRect = bounds
-        captureSelection(using: path)
+        let newPath = NSBezierPath()
+        newPath.move(to: freeFormPath[0])
+        for i in 1..<freeFormPath.count { newPath.line(to: freeFormPath[i]) }
+        newPath.close()
+        combineSelection(with: newPath, mode: mode)
         freeFormPath = []
-        lastSelectionOrigin = bounds.origin
     }
     
-    /// Captures the current selection rect from the canvas image into selectionImage.
-    private func captureSelection() {
-        // Rectangle selection capture (legacy)
-        guard let rect = selectionRect, rect.width > 0, rect.height > 0, let image = canvasImage else { return }
+    /// Finalize rectangle selection with combination mode.
+    private func finalizeRectangleSelection(rect: NSRect, mode: SelectionCombineMode) {
+        guard rect.width > 0, rect.height > 0 else { return }
+        let path = NSBezierPath(rect: rect)
+        combineSelection(with: path, mode: mode)
+    }
+    
+    /// Combine current selection with a new path using replace/add/subtract.
+    private func combineSelection(with newPath: NSBezierPath, mode: SelectionCombineMode) {
+        guard let image = canvasImage else { return }
         
-        let captured = NSImage(size: rect.size)
-        captured.lockFocus()
-        image.draw(in: NSRect(origin: .zero, size: rect.size), from: rect, operation: .copy, fraction: 1.0)
-        captured.unlockFocus()
-        
-        selectionImage = captured
-        selectionPath = nil
-        lastSelectionOrigin = rect.origin
+        switch mode {
+        case .replace:
+            // Capture selection from canvas using mask
+            selectionPath = newPath.copy() as? NSBezierPath
+            let bounds = selectionPath!.bounds
+            selectionRect = bounds
+            captureSelection(using: selectionPath!)
+            lastSelectionOrigin = bounds.origin
+            
+        case .add:
+            if selectionImage == nil {
+                // Nothing to add to; treat as replace
+                combineSelection(with: newPath, mode: .replace)
+                return
+            }
+            // Capture new area
+            let addBounds = newPath.bounds
+            guard addBounds.width > 0, addBounds.height > 0 else { return }
+            // Build a new union image sized to union of rects
+            guard let currentRect = selectionRect else { return }
+            let unionRect = currentRect.union(addBounds)
+            let unionImage = NSImage(size: unionRect.size)
+            unionImage.lockFocus()
+            // Draw existing selection at offset
+            let existingOffset = NSPoint(x: currentRect.origin.x - unionRect.origin.x,
+                                         y: currentRect.origin.y - unionRect.origin.y)
+            selectionImage?.draw(in: NSRect(x: existingOffset.x, y: existingOffset.y, width: currentRect.size.width, height: currentRect.size.height))
+            // Draw new captured area clipped to newPath
+            NSGraphicsContext.current?.saveGraphicsState()
+            let translated = newPath.copy() as! NSBezierPath
+            let t = AffineTransform(translationByX: -unionRect.origin.x, byY: -unionRect.origin.y)
+            translated.transform(using: t)
+            translated.addClip()
+            image.draw(in: NSRect(origin: .zero, size: unionRect.size),
+                       from: unionRect,
+                       operation: .sourceOver,
+                       fraction: 1.0)
+            NSGraphicsContext.current?.restoreGraphicsState()
+            unionImage.unlockFocus()
+            selectionImage = unionImage
+            selectionRect = unionRect
+            // Update selectionPath as union (non-zero rule)
+            if let existing = selectionPath?.copy() as? NSBezierPath {
+                existing.windingRule = .nonZero
+                existing.append(newPath)
+                selectionPath = existing
+            } else {
+                selectionPath = newPath.copy() as? NSBezierPath
+            }
+            lastSelectionOrigin = unionRect.origin
+            
+        case .subtract:
+            guard selectionImage != nil, let currentRect = selectionRect else {
+                // Nothing to subtract from; ignore
+                return
+            }
+            // Create a temp image with opaque fill inside newPath to punch out (destinationOut)
+            let temp = NSImage(size: currentRect.size)
+            temp.lockFocus()
+            NSColor.clear.setFill()
+            NSBezierPath(rect: NSRect(origin: .zero, size: currentRect.size)).fill()
+            let translated = newPath.copy() as! NSBezierPath
+            let t = AffineTransform(translationByX: -currentRect.origin.x, byY: -currentRect.origin.y)
+            translated.transform(using: t)
+            NSColor.black.setFill() // Opaque source for destinationOut
+            translated.fill()
+            temp.unlockFocus()
+            
+            // Apply destinationOut to remove from selectionImage
+            let result = NSImage(size: currentRect.size)
+            result.lockFocus()
+            selectionImage?.draw(at: .zero, from: NSRect(origin: .zero, size: currentRect.size), operation: .sourceOver, fraction: 1.0)
+            temp.draw(at: .zero, from: NSRect(origin: .zero, size: currentRect.size), operation: .destinationOut, fraction: 1.0)
+            result.unlockFocus()
+            selectionImage = result
+            
+            // Update path by introducing a hole (even-odd rule)
+            if selectionPath == nil {
+                // If we only had a rect selection, synthesize a path from it
+                if let rect = selectionRect {
+                    selectionPath = NSBezierPath(rect: rect)
+                }
+            }
+            if let existing = selectionPath?.copy() as? NSBezierPath {
+                existing.windingRule = .evenOdd
+                existing.append(newPath)
+                selectionPath = existing
+            }
+            // selectionRect remains the same; we don't shrink bounds here
+        }
     }
     
     /// Captures selection using a free-form mask (alpha outside the path).
@@ -1069,8 +1213,8 @@ class CanvasNSView: NSView {
         rep.size = bounds.size
         
         NSGraphicsContext.saveGraphicsState()
-        if let ctx = NSGraphicsContext(bitmapImageRep: rep) {
-            NSGraphicsContext.current = ctx
+        if let _ = NSGraphicsContext(bitmapImageRep: rep) {
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             
             // Clear to transparent
             NSColor.clear.setFill()
@@ -1094,6 +1238,20 @@ class CanvasNSView: NSView {
         selectionImage = captured
         selectionRect = bounds
         lastSelectionOrigin = bounds.origin
+    }
+    
+    /// Captures the current selection rect from the canvas image into selectionImage (rectangular).
+    private func captureSelection() {
+        guard let rect = selectionRect, rect.width > 0, rect.height > 0, let image = canvasImage else { return }
+        
+        let captured = NSImage(size: rect.size)
+        captured.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: rect.size), from: rect, operation: .copy, fraction: 1.0)
+        captured.unlockFocus()
+        
+        selectionImage = captured
+        selectionPath = nil
+        lastSelectionOrigin = rect.origin
     }
     
     /// Commits the selection image back into the canvas at its current rect.
@@ -1149,6 +1307,145 @@ class CanvasNSView: NSView {
         NSGraphicsContext.current?.restoreGraphicsState()
         newImage.unlockFocus()
         canvasImage = newImage
+    }
+    
+    // MARK: - Clipboard & Selection Ops
+    
+    /// Copy selection to NSPasteboard as PNG.
+    @objc private func copySelection() {
+        guard let selImage = selectionImage,
+              let tiff = selImage.tiffRepresentation,
+              let bmp = NSBitmapImageRep(data: tiff),
+              let png = bmp.representation(using: .png, properties: [:]) else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setData(png, forType: .png)
+    }
+    
+    /// Paste PNG or image from NSPasteboard as a new floating selection.
+    @objc private func pasteFromPasteboard() {
+        let pb = NSPasteboard.general
+        var pastedImage: NSImage?
+        if let data = pb.data(forType: .png), let img = NSImage(data: data) {
+            pastedImage = img
+        } else if let img = NSImage(pasteboard: pb) {
+            pastedImage = img
+        }
+        guard let img = pastedImage else { return }
+        
+        // Place at top-left (or center) as a new floating selection
+        let size = img.size
+        let origin = NSPoint(x: min(10, max(0, canvasSize.width - size.width)), y: min(canvasSize.height - size.height - 10, max(0, canvasSize.height - size.height)))
+        selectionImage = img
+        selectionRect = NSRect(origin: origin, size: size)
+        selectionPath = nil
+        originalSelectionRect = nil
+        lastSelectionOrigin = origin
+        isMovingSelection = false
+        setNeedsDisplay(bounds)
+    }
+    
+    /// Delete selection: clear on canvas and drop floating selection.
+    @objc private func deleteSelectionAction() {
+        guard let rect = selectionRect else { return }
+        if let path = selectionPath {
+            clearPath(path)
+        } else {
+            clearRect(rect)
+        }
+        // Persist deletion
+        saveToDocument(actionName: "Delete Selection")
+        // Clear floating selection
+        selectionRect = nil
+        selectionImage = nil
+        selectionPath = nil
+        originalSelectionRect = nil
+        lastSelectionOrigin = nil
+        setNeedsDisplay(bounds)
+    }
+    
+    /// Rotate selection 90 degrees CW/CCW.
+    @objc private func rotateCWAction() { rotateSelection(clockwise: true) }
+    @objc private func rotateCCWAction() { rotateSelection(clockwise: false) }
+    
+    private func rotateSelection(clockwise: Bool) {
+        guard let img = selectionImage, var rect = selectionRect else { return }
+        // Rotate image
+        let newSize = NSSize(width: rect.height, height: rect.width)
+        let rotated = NSImage(size: newSize)
+        rotated.lockFocus()
+        let transform = NSAffineTransform()
+        if clockwise {
+            transform.translateX(by: newSize.width, yBy: 0)
+            transform.rotate(byDegrees: 90)
+        } else {
+            transform.translateX(by: 0, yBy: newSize.height)
+            transform.rotate(byDegrees: -90)
+        }
+        transform.concat()
+        img.draw(in: NSRect(origin: .zero, size: rect.size))
+        rotated.unlockFocus()
+        selectionImage = rotated
+        
+        // Rotate path around its bounds center
+        if let path = selectionPath {
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            var t = AffineTransform(translationByX: -center.x, byY: -center.y)
+            path.transform(using: t)
+            t = AffineTransform(rotationByDegrees: clockwise ? 90 : -90)
+            path.transform(using: t)
+            t = AffineTransform(translationByX: center.x, byY: center.y)
+            path.transform(using: t)
+            // Update rect to new bounds
+            rect = path.bounds
+            selectionRect = rect
+            lastSelectionOrigin = rect.origin
+        } else {
+            // Update rect swapping width/height around same center
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            rect.size = newSize
+            rect.origin = NSPoint(x: center.x - newSize.width/2, y: center.y - newSize.height/2)
+            selectionRect = rect
+            lastSelectionOrigin = rect.origin
+        }
+        setNeedsDisplay(bounds)
+    }
+    
+    /// Scale selection up/down.
+    @objc private func scaleUpAction() { scaleSelection(by: 2.0) }
+    @objc private func scaleDownAction() { scaleSelection(by: 0.5) }
+    
+    private func scaleSelection(by factor: CGFloat) {
+        guard let img = selectionImage, var rect = selectionRect else { return }
+        let newSize = NSSize(width: max(1, rect.size.width * factor), height: max(1, rect.size.height * factor))
+        // Scale image
+        let scaled = NSImage(size: newSize)
+        scaled.lockFocus()
+        img.draw(in: NSRect(origin: .zero, size: newSize), from: NSRect(origin: .zero, size: rect.size), operation: .sourceOver, fraction: 1.0)
+        scaled.unlockFocus()
+        selectionImage = scaled
+        
+        // Scale path around center
+        if let path = selectionPath {
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            var t = AffineTransform(translationByX: -center.x, byY: -center.y)
+            path.transform(using: t)
+            t = AffineTransform(scaleByX: factor, byY: factor)
+            path.transform(using: t)
+            t = AffineTransform(translationByX: center.x, byY: center.y)
+            path.transform(using: t)
+            rect = path.bounds
+            selectionRect = rect
+            lastSelectionOrigin = rect.origin
+        } else {
+            // Update rect around same center
+            let center = NSPoint(x: rect.midX, y: rect.midY)
+            rect.size = newSize
+            rect.origin = NSPoint(x: center.x - newSize.width/2, y: center.y - newSize.height/2)
+            selectionRect = rect
+            lastSelectionOrigin = rect.origin
+        }
+        setNeedsDisplay(bounds)
     }
     
     // MARK: - Color Picker & Fill
