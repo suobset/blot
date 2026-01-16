@@ -162,7 +162,7 @@ struct ContentView: View {
                 
                 // --- Show ESC message only when text tool is selected ---
                 if toolState.currentTool == .text {
-                    Text("Press ESC to commit text")
+                    Text("Press ESC when done")
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .padding(.leading, 8)

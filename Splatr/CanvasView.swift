@@ -219,6 +219,17 @@ class CanvasNSView: NSView {
     // Selection combination mode
     private enum SelectionCombineMode { case replace, add, subtract }
     
+    // --- Add/replace the following in CanvasNSView ---
+    
+    // 1. Add state for text box drag and editing
+    private var textBoxStart: NSPoint?
+    private var textBoxEnd: NSPoint?
+    private var isDraggingTextBox: Bool = false
+    
+    // --- 1. Add a property to track the last text string and rotation angle ---
+    private var lastTextString: String?
+    private var selectionRotation: CGFloat = 0  // in radians
+
     override var acceptsFirstResponder: Bool { true }
     
     /// Provide a context menu with selection operations.
@@ -267,6 +278,23 @@ class CanvasNSView: NSView {
         if chars == String(UnicodeScalar(NSDeleteCharacter)!) || chars == String(UnicodeScalar(NSBackspaceCharacter)!) {
             deleteSelectionAction()
             return
+        }
+        // --- ESC key to commit/dismiss text box or floating selection ---
+        if chars == String(UnicodeScalar(0x1B)!) { // ESC key
+            if let tf = textField {
+                commitText()
+                tf.removeFromSuperview()
+                textField = nil
+                setNeedsDisplay(bounds)
+                window?.makeFirstResponder(self)
+                return
+            }
+            if selectionImage != nil || selectionRect != nil {
+                commitSelection()
+                setNeedsDisplay(bounds)
+                window?.makeFirstResponder(self)
+                return
+            }
         }
         super.keyDown(with: event)
     }
@@ -498,6 +526,17 @@ class CanvasNSView: NSView {
             drawSelectionHandles(rect)
         }
         
+        // Draw text box preview while dragging
+        if currentTool == .text, isDraggingTextBox, let start = textBoxStart, let end = textBoxEnd {
+            let rect = rectFromPoints(start, end)
+            NSColor.systemBlue.setStroke()
+            let path = NSBezierPath(rect: rect)
+            path.setLineDash([4, 2], count: 2, phase: 0)
+            path.lineWidth = 1.5
+            path.stroke()
+            drawSelectionHandles(rect)
+        }
+
         // Draw handles around active text field for transform affordance
         if let tf = textField {
             let tfRect = tf.frame
@@ -571,7 +610,23 @@ class CanvasNSView: NSView {
             }
             return
         }
-        
+
+        // Text box drag handles
+        if currentTool == .text, isDraggingTextBox, let start = textBoxStart, let end = textBoxEnd {
+            let rect = rectFromPoints(start, end)
+            let handle = handleAt(point, in: rect)
+            switch handle {
+            case .left, .right: NSCursor.resizeLeftRight.set(); return
+            case .top, .bottom: NSCursor.resizeUpDown.set(); return
+            case .rotate: NSCursor.crosshair.set(); return
+            case .topLeft, .topRight, .bottomLeft, .bottomRight: NSCursor.crosshair.set(); return
+            default: break
+            }
+            if rect.contains(point) && handle == .none {
+                NSCursor.openHand.set(); return
+            }
+        }
+
         // Text field handle cursors
         if let tf = textField {
             let handle = handleAt(point, in: tf.frame)
@@ -613,9 +668,85 @@ class CanvasNSView: NSView {
     
     /// Begin drawing, selecting, transforming, or resizing based on tool and click location.
     override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         lastMousePoint = clamp(point)
+
+        // --- 1. If switching to a different tool, commit/remove any text field or floating selection ---
+        // Only commit if a non-text tool is selected and used on canvas
+        if currentTool != .text {
+            if let tf = textField {
+                commitText()
+                tf.removeFromSuperview()
+                textField = nil
+                setNeedsDisplay(bounds)
+            }
+            if selectionImage != nil || selectionRect != nil {
+                commitSelection()
+                setNeedsDisplay(bounds)
+            }
+            // Continue with normal mouseDown for the new tool
+        }
+
+        // --- 2. If using text tool, do NOT commit/remove text field or floating selection on click ---
+        if currentTool == .text {
+            // If a text field is present, check if the click is inside its frame or on its handles
+            if let tf = textField {
+                let tfRect = tf.frame
+                let handle = handleAt(lastMousePoint, in: tfRect)
+                if handle != .none || tfRect.contains(lastMousePoint) {
+                    // Begin resizing/moving the text box (do NOT commit/remove)
+                    // Convert to floating selection if resizing/moving (like selection)
+                    if handle != .none || (tfRect.contains(lastMousePoint) && handle == .none) {
+                        // Convert text field to floating selection
+                        lastTextString = tf.stringValue
+                        selectionRotation = 0
+                        let image = renderTextFieldToImage(tf)
+                        selectionImage = image
+                        selectionRect = tf.frame
+                        selectionPath = nil
+                        originalSelectionRect = nil
+                        lastSelectionOrigin = tf.frame.origin
+                        isMovingSelection = false
+                        tf.removeFromSuperview()
+                        textField = nil
+                        textInsertPoint = nil
+                        // Now begin transform or move as usual
+                        if handle != .none {
+                            beginTransform(handle: handle, at: lastMousePoint)
+                        } else {
+                            startMovingSelection(at: lastMousePoint)
+                        }
+                        setNeedsDisplay(bounds)
+                        return
+                    }
+                }
+                // If click is outside the text field, DO NOT commit/remove or start a new text box!
+                // Just ignore the click.
+                return
+            }
+            // If a floating selection (from previous text or selection), allow transform/move
+            if let rect = selectionRect, selectionImage != nil {
+                let handle = handleAt(lastMousePoint, in: rect)
+                if handle != .none {
+                    beginTransform(handle: handle, at: lastMousePoint)
+                    setNeedsDisplay(bounds)
+                    return
+                }
+                if rect.contains(lastMousePoint) {
+                    startMovingSelection(at: lastMousePoint)
+                    setNeedsDisplay(bounds)
+                    return
+                }
+                // If click is outside floating selection, ignore (do not commit)
+                return
+            }
+            // If no text field or floating selection, start new text box drag
+            textBoxStart = clamp(point)
+            textBoxEnd = clamp(point)
+            isDraggingTextBox = true
+            setNeedsDisplay(bounds)
+            return
+        }
 
         // --- TEXT FIELD HANDLE/RECT LOGIC ---
         if let tf = textField {
@@ -643,7 +774,7 @@ class CanvasNSView: NSView {
                 return
             }
         }
-        
+
         // Check for canvas resize handle drags first.
         if showResizeHandles {
             resizeEdge = resizeEdgeAt(point)
@@ -741,6 +872,12 @@ class CanvasNSView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         lastMousePoint = clamp(point)
         
+        if isDraggingTextBox, currentTool == .text {
+            textBoxEnd = clamp(point)
+            setNeedsDisplay(bounds)
+            return
+        }
+        
         if isResizing {
             handleResizeDrag(to: point)
             return
@@ -809,6 +946,42 @@ class CanvasNSView: NSView {
     
     /// Finalize the operation for the current tool or transform on mouse up.
     override func mouseUp(with event: NSEvent) {
+        if isDraggingTextBox, currentTool == .text {
+            isDraggingTextBox = false
+            guard let start = textBoxStart, let end = textBoxEnd else { return }
+            let rect = rectFromPoints(start, end)
+            if rect.width < 10 || rect.height < 10 { // Too small, ignore
+                textBoxStart = nil
+                textBoxEnd = nil
+                setNeedsDisplay(bounds)
+                return
+            }
+            // Create NSTextField sized to rect, font size fits height
+            let state = ToolPaletteState.shared
+            let fontSize = max(8, rect.height - 8)
+            let font = NSFont(name: state.fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
+            let tf = NSTextField(frame: rect)
+            tf.isBordered = true
+            tf.backgroundColor = .white
+            tf.font = font
+            tf.textColor = currentColor
+            tf.target = self
+            tf.action = #selector(textFieldEntered(_:))
+            tf.focusRingType = .none
+            tf.lineBreakMode = .byWordWrapping
+            tf.usesSingleLineMode = false
+            tf.cell?.wraps = true
+            tf.cell?.isScrollable = false
+            addSubview(tf)
+            tf.becomeFirstResponder()
+            textField = tf
+            textInsertPoint = rect.origin
+            textBoxStart = nil
+            textBoxEnd = nil
+            setNeedsDisplay(bounds)
+            return
+        }
+
         if isResizing {
             isResizing = false
             resizeEdge = .none
@@ -1102,7 +1275,7 @@ class CanvasNSView: NSView {
     
     // MARK: - Polygon Tool
     
-    /// Closes and commits the polygon using the current style.
+    /// Closes and commits the polygon using the current shape style.
     private func commitPolygon() {
         guard polygonPoints.count >= 2, let image = canvasImage else {
             polygonPoints = []
@@ -1620,8 +1793,8 @@ class CanvasNSView: NSView {
         transformOriginalImage = selectionImage
         transformOriginalPath = selectionPath?.copy() as? NSBezierPath
         if handle == .rotate {
-            let center = NSPoint(x: rect.midX, y: rect.midY)
-            transformStartAngle = atan2(point.y - center.y, point.x - center.x)
+            let center = rectCenter(rect)
+            transformStartAngle = atan2(point.y - center.y, point.x - center.x) - selectionRotation
         }
     }
     
@@ -1631,46 +1804,11 @@ class CanvasNSView: NSView {
         
         switch activeHandle {
         case .rotate:
-            guard var rect = selectionRect else { return }
-            let center = NSPoint(x: startRect.midX, y: startRect.midY)
+            let center = rectCenter(startRect)
             let angleNow = atan2(point.y - center.y, point.x - center.x)
-            let delta = angleNow - transformStartAngle
-            // Compute new bounding size for rotated rect
-            let w = startRect.size.width
-            let h = startRect.size.height
-            let absCos = abs(cos(delta))
-            let absSin = abs(sin(delta))
-            let newSize = NSSize(width: w * absCos + h * absSin, height: w * absSin + h * absCos)
-            // Render rotated image into new bounds
-            let rotated = NSImage(size: newSize)
-            rotated.lockFocus()
-            let t = NSAffineTransform()
-            t.translateX(by: newSize.width / 2, yBy: newSize.height / 2)
-            t.rotate(byRadians: delta)
-            t.translateX(by: -w / 2, yBy: -h / 2)
-            t.concat()
-            originalImage.draw(in: NSRect(origin: .zero, size: startRect.size))
-            rotated.unlockFocus()
-            selectionImage = rotated
-            // Rotate path if present
-            if let basePath = transformOriginalPath?.copy() as? NSBezierPath {
-                let path = basePath
-                var aff = AffineTransform(translationByX: -center.x, byY: -center.y)
-                path.transform(using: aff)
-                aff = AffineTransform(rotationByRadians: delta)
-                path.transform(using: aff)
-                aff = AffineTransform(translationByX: center.x, byY: center.y)
-                path.transform(using: aff)
-                selectionPath = path
-                rect = path.bounds
-            } else {
-                // Keep center fixed, update rect size
-                rect.size = newSize
-                rect.origin = NSPoint(x: center.x - newSize.width/2, y: center.y - newSize.height/2)
-            }
-            selectionRect = rect
-            lastSelectionOrigin = rect.origin
-            
+            selectionRotation = angleNow - transformStartAngle
+            // Do not change rect size or selectionImage here!
+            setNeedsDisplay(bounds)
         case .topLeft, .top, .topRight, .right, .bottomRight, .bottom, .bottomLeft, .left:
             var newRect = startRect
             // Adjust rect edges based on handle
@@ -1731,6 +1869,7 @@ class CanvasNSView: NSView {
                 selectionPath = path
             }
             selectionRect = newRect
+
             lastSelectionOrigin = newRect.origin
             
         case .none:
@@ -1793,6 +1932,7 @@ class CanvasNSView: NSView {
         let height = bitmap.pixelsHigh
         
         guard startX >= 0 && startX < width && startY >= 0 && startY < height else { return }
+
         guard let targetColor = bitmap.colorAt(x: startX, y: startY) else { return }
         
         if colorsMatch(targetColor, currentColor) { return }
@@ -1882,6 +2022,10 @@ class CanvasNSView: NSView {
         tf.target = self
         tf.action = #selector(textFieldEntered(_:))
         tf.focusRingType = .none
+        tf.lineBreakMode = .byWordWrapping
+        tf.usesSingleLineMode = false
+        tf.cell?.wraps = true
+        tf.cell?.isScrollable = false
         addSubview(tf)
         tf.becomeFirstResponder()
         textField = tf
@@ -1896,45 +2040,54 @@ class CanvasNSView: NSView {
 
     /// Renders the text field's contents into the canvas image at the insertion point.
     private func commitText() {
-        guard let tf = textField, let point = textInsertPoint, let image = canvasImage else { return }
-        
+        guard let tf = textField, let image = canvasImage else { return }
+        let rect = tf.frame
         let text = tf.stringValue
-       
         guard !text.isEmpty else { return }
-        
+
         let newImage = NSImage(size: canvasSize)
         newImage.lockFocus()
         image.draw(in: NSRect(origin: .zero, size: canvasSize))
-        
-        // Build the font with style attributes
-        let state = ToolPaletteState.shared
-        let font = NSFont(name: state.fontName, size: state.fontSize) ?? NSFont.systemFont(ofSize: state.fontSize)
-        
-        // Apply bold/italic
-        var traits: NSFontDescriptor.SymbolicTraits = []
-        if state.isBold { traits.insert(.bold) }
-        if state.isItalic { traits.insert(.italic) }
-        
-        //let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
-        //font = NSFont(descriptor: descriptor, size: state.fontSize) ?? font
-        
+
+        // Use the text field's font and color
         var attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: currentColor
+            .font: tf.font ?? NSFont.systemFont(ofSize: 14),
+            .foregroundColor: tf.textColor ?? NSColor.black
         ]
-        
-        // Apply underline if enabled
+        let state = ToolPaletteState.shared
         if state.isUnderlined {
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
-        
         let attrString = NSAttributedString(string: text, attributes: attrs)
-        attrString.draw(at: point)
-        
+        // Draw inside the rect (multi-line)
+        attrString.draw(in: rect)
         newImage.unlockFocus()
         canvasImage = newImage
         textInsertPoint = nil
         saveToDocument(actionName: "Text")
+    }
+
+    /// Renders the contents of an NSTextField to an NSImage.
+    private func renderTextFieldToImage(_ tf: NSTextField) -> NSImage {
+        // Expand frame to fit text if needed
+        tf.sizeToFit()
+        var frame = tf.frame
+        frame.size.width = max(frame.size.width, tf.intrinsicContentSize.width)
+        frame.size.height = tf.intrinsicContentSize.height
+        tf.frame = frame
+
+        let size = tf.frame.size
+        let image = NSImage(size: size)
+        image.lockFocus()
+        NSColor.white.setFill()
+        NSRect(origin: .zero, size: size).fill()
+        let attrString = NSAttributedString(string: tf.stringValue, attributes: [
+            .font: tf.font ?? NSFont.systemFont(ofSize: 14),
+            .foregroundColor: tf.textColor ?? NSColor.black
+        ])
+        attrString.draw(in: NSRect(origin: .zero, size: size))
+        image.unlockFocus()
+        return image
     }
     
     // MARK: - Canvas Resize Handling
@@ -1965,6 +2118,11 @@ class CanvasNSView: NSView {
     /// Clamp a point to the canvas bounds.
     private func clamp(_ point: NSPoint) -> NSPoint {
         NSPoint(x: max(0, min(point.x, canvasSize.width)), y: max(0, min(point.y, canvasSize.height)))
+    }
+
+    /// Returns the center point of a rect.
+    private func rectCenter(_ rect: NSRect) -> NSPoint {
+    NSPoint(x: rect.midX, y: rect.midY)
     }
     
     /// Construct a rect from two corner points.
@@ -2003,35 +2161,6 @@ class CanvasNSView: NSView {
         } else {
             delegate?.saveToDocument(pngData, image: image)
         }
-    }
-    
-    /// Renders the contents of an NSTextField to an NSImage.
-    private func renderTextFieldToImage(_ tf: NSTextField) -> NSImage {
-        let size = tf.frame.size
-        let image = NSImage(size: size)
-        image.lockFocus()
-        // White background for text
-        NSColor.white.setFill()
-        NSRect(origin: .zero, size: size).fill()
-        // Draw attributed string
-        tf.attributedStringValue.draw(at: .zero)
-        image.unlockFocus()
-        return image
-    }
-}
-
-// MARK: - Color Extension
-
-/// Convenience color comparison with tolerance in deviceRGB space.
-extension NSColor {
-    func isClose(to other: NSColor?, tolerance: CGFloat = 0.1) -> Bool {
-        guard let other = other,
-              let c1 = self.usingColorSpace(.deviceRGB),
-              let c2 = other.usingColorSpace(.deviceRGB) else { return false }
-        
-        return abs(c1.redComponent - c2.redComponent) < tolerance &&
-               abs(c1.greenComponent - c2.greenComponent) < tolerance &&
-               abs(c1.blueComponent - c2.blueComponent) < tolerance
     }
 }
 
