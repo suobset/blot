@@ -160,6 +160,14 @@ struct ContentView: View {
                 .background(Color.accentColor.opacity(0.15))
                 .cornerRadius(6)
                 
+                // --- Show ESC message only when text tool is selected ---
+                if toolState.currentTool == .text {
+                    Text("Press ESC to commit text")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 8)
+                }
+                
                 Divider()
                 
                 zoomControlsView
