@@ -197,6 +197,8 @@ class CanvasNSView: NSView {
     // Text tool
     private var textField: NSTextField?
     private var textInsertPoint: NSPoint?
+    // Tracks whether we originated from text tool (for commit action naming)
+    private var isTextSelection: Bool = false
     
     // Canvas resize handles (outside canvas)
     private var isResizing = false
@@ -495,6 +497,12 @@ class CanvasNSView: NSView {
         if let rect = selectionRect, selectionImage != nil {
             drawSelectionHandles(rect)
         }
+        
+        // Draw handles around active text field for transform affordance
+        if let tf = textField {
+            let tfRect = tf.frame
+            drawSelectionHandles(tfRect)
+        }
     }
     
     /// Draws right, bottom, and corner resize handles next to the canvas.
@@ -563,14 +571,29 @@ class CanvasNSView: NSView {
             }
             return
         }
+        
+        // Text field handle cursors
+        if let tf = textField {
+            let handle = handleAt(point, in: tf.frame)
+            switch handle {
+            case .left, .right: NSCursor.resizeLeftRight.set(); return
+            case .top, .bottom: NSCursor.resizeUpDown.set(); return
+            case .rotate: NSCursor.crosshair.set(); return
+            case .topLeft, .topRight, .bottomLeft, .bottomRight: NSCursor.crosshair.set(); return
+            default: break
+            }
+            // Inside text field rect = move cursor
+            if tf.frame.contains(point) && handle == .none {
+                NSCursor.openHand.set(); return
+            }
+        }
+        
         // Selection handle cursors
         if let rect = selectionRect, selectionImage != nil {
             let handle = handleAt(point, in: rect)
             switch handle {
             case .left, .right: NSCursor.resizeLeftRight.set(); return
             case .top, .bottom: NSCursor.resizeUpDown.set(); return
-            //case .topLeft, .bottomRight: NSCursor..set(); return
-            //case .topRight, .bottomLeft: NSCursor.resizeDiagonalUpLeftRight.set(); return
             case .rotate: NSCursor.crosshair.set(); return
             default: break
             }
