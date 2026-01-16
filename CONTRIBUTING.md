@@ -1,8 +1,8 @@
 # Contributing to Splatr
 
-Splatr is not currently accepting any code contributions, in accordance to the poilicies laid out by the Swift Student Developer Challenge. Please refrain from any code contributions until the app is submitted to the Challenge.
+Splatr is not currently accepting any code contributions, in accordance to the policies laid out by the [Swift Student Challenge](https://developer.apple.com/swift-student-challenge/). Please refrain from any code contributions until the app is submitted to the Challenge. All Splatr code has been exclusively written by Kush S, with the git history and local history intact.
 
-However, the following documentation (and more documentation) exist for when contributions will be accepted later this year. 
+However, the following documentation (and more documentation) exist for when contributions will be accepted later this year onwards. 
 
 ## Table of Contents
 
