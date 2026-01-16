@@ -161,7 +161,7 @@ struct ContentView: View {
                 .cornerRadius(6)
                 
                 // --- Show ESC message only when text tool is selected ---
-                if toolState.currentTool == .text {
+                if toolState.currentTool == .text || toolState.currentTool == .rectangleSelect || toolState.currentTool == .freeFormSelect {
                     Text("Press ESC when done")
                         .font(.caption)
                         .foregroundColor(.secondary)

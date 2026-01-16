@@ -182,6 +182,8 @@ class CanvasNSView: NSView {
     // True free-form selection path and tracking of its position
     private var selectionPath: NSBezierPath?
     private var lastSelectionOrigin: NSPoint?
+    // Track if we have an active/committed selection (prevents new selections until ESC)
+    private var hasActiveSelection: Bool = false
     
     // Transform/handles
     private enum SelectionHandle {
@@ -193,12 +195,15 @@ class CanvasNSView: NSView {
     private var transformOriginalPath: NSBezierPath?
     private var transformStartAngle: CGFloat = 0
     private var lastMousePoint: NSPoint = .zero
+    private var transformStartRotation: CGFloat = 0
     
     // Text tool
     private var textField: NSTextField?
     private var textInsertPoint: NSPoint?
     // Tracks whether we originated from text tool (for commit action naming)
     private var isTextSelection: Bool = false
+    // Track if we have an active text box (prevents new text boxes until ESC)
+    private var hasActiveTextBox: Bool = false
     
     // Canvas resize handles (outside canvas)
     private var isResizing = false
@@ -219,14 +224,12 @@ class CanvasNSView: NSView {
     // Selection combination mode
     private enum SelectionCombineMode { case replace, add, subtract }
     
-    // --- Add/replace the following in CanvasNSView ---
-    
-    // 1. Add state for text box drag and editing
+    // State for text box drag and editing
     private var textBoxStart: NSPoint?
     private var textBoxEnd: NSPoint?
     private var isDraggingTextBox: Bool = false
     
-    // --- 1. Add a property to track the last text string and rotation angle ---
+    // Track the last text string and rotation angle
     private var lastTextString: String?
     private var selectionRotation: CGFloat = 0  // in radians
 
@@ -261,36 +264,21 @@ class CanvasNSView: NSView {
     
     /// Handle keyboard shortcuts for selection operations.
     override func keyDown(with event: NSEvent) {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let chars = event.charactersIgnoringModifiers ?? ""
-        if flags.contains(.command) {
-            switch chars.lowercased() {
-            case "c": copySelection()
-            case "v": pasteFromPasteboard()
-            case "]": rotateSelection(clockwise: true)
-            case "[": rotateSelection(clockwise: false)
-            case "=": scaleSelection(by: 1.1)
-            case "-": scaleSelection(by: 0.9)
-            default: super.keyDown(with: event)
-            }
-            return
-        }
-        if chars == String(UnicodeScalar(NSDeleteCharacter)!) || chars == String(UnicodeScalar(NSBackspaceCharacter)!) {
-            deleteSelectionAction()
-            return
-        }
-        // --- ESC key to commit/dismiss text box or floating selection ---
         if chars == String(UnicodeScalar(0x1B)!) { // ESC key
             if let tf = textField {
                 commitText()
                 tf.removeFromSuperview()
                 textField = nil
+                hasActiveTextBox = false
                 setNeedsDisplay(bounds)
                 window?.makeFirstResponder(self)
                 return
             }
-            if selectionImage != nil || selectionRect != nil {
+            if selectionImage != nil || selectionRect != nil || hasActiveSelection {
                 commitSelection()
+                selectionRotation = 0
+                hasActiveSelection = false
                 setNeedsDisplay(bounds)
                 window?.makeFirstResponder(self)
                 return
@@ -495,13 +483,42 @@ class CanvasNSView: NSView {
             }
             path.stroke()
         }
-        
-        // Draw selection image if present
+
+        // Draw selection image if present, with rotation
         if let rect = selectionRect, let selImage = selectionImage {
+            let ctx = NSGraphicsContext.current?.cgContext
+            ctx?.saveGState()
+            let center = rectCenter(rect)
+            ctx?.translateBy(x: center.x, y: center.y)
+            ctx?.rotate(by: selectionRotation)
+            ctx?.translateBy(x: -center.x, y: -center.y)
             selImage.draw(in: rect, from: NSRect(origin: .zero, size: rect.size), operation: .sourceOver, fraction: 1.0)
+            // Draw marching ants (rotated with selection)
+            let phase = CGFloat(CACurrentMediaTime() * 10).truncatingRemainder(dividingBy: 8)
+            if let path = selectionPath {
+                let ants = path.copy() as! NSBezierPath
+                ants.lineWidth = 1
+                NSColor.white.setStroke()
+                ants.stroke()
+                ants.setLineDash([4, 4], count: 2, phase: phase)
+                NSColor.black.setStroke()
+                ants.stroke()
+            } else {
+                let ants = NSBezierPath(rect: rect)
+                ants.lineWidth = 1
+                NSColor.white.setStroke()
+                ants.stroke()
+                ants.setLineDash([4, 4], count: 2, phase: phase)
+                NSColor.black.setStroke()
+                ants.stroke()
+            }
+            // Draw handles in rotated space
+            drawSelectionHandles(rect, rotation: 0) // Handles drawn in rotated context
+            ctx?.restoreGState()
+            return
         }
-        
-        // Draw marching ants: prefer free-form path if available, else rect
+
+        // Draw marching ants for non-floating selection (not rotated)
         if let path = selectionPath {
             let ants = path.copy() as! NSBezierPath
             ants.lineWidth = 1
@@ -521,11 +538,6 @@ class CanvasNSView: NSView {
             path.stroke()
         }
         
-        // Draw transform handles if a floating selection exists
-        if let rect = selectionRect, selectionImage != nil {
-            drawSelectionHandles(rect)
-        }
-        
         // Draw text box preview while dragging
         if currentTool == .text, isDraggingTextBox, let start = textBoxStart, let end = textBoxEnd {
             let rect = rectFromPoints(start, end)
@@ -534,13 +546,13 @@ class CanvasNSView: NSView {
             path.setLineDash([4, 2], count: 2, phase: 0)
             path.lineWidth = 1.5
             path.stroke()
-            drawSelectionHandles(rect)
+            drawSelectionHandles(rect, rotation: 0)
         }
 
         // Draw handles around active text field for transform affordance
         if let tf = textField {
             let tfRect = tf.frame
-            drawSelectionHandles(tfRect)
+            drawSelectionHandles(tfRect, rotation: 0)
         }
     }
     
@@ -671,33 +683,32 @@ class CanvasNSView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         lastMousePoint = clamp(point)
 
-        // --- 1. If switching to a different tool, commit/remove any text field or floating selection ---
-        // Only commit if a non-text tool is selected and used on canvas
-        if currentTool != .text {
+        // If switching to a different tool, commit/remove any text field or floating selection
+        if currentTool != .text && currentTool != .rectangleSelect && currentTool != .freeFormSelect {
             if let tf = textField {
                 commitText()
                 tf.removeFromSuperview()
                 textField = nil
+                hasActiveTextBox = false
                 setNeedsDisplay(bounds)
             }
             if selectionImage != nil || selectionRect != nil {
                 commitSelection()
+                hasActiveSelection = false
                 setNeedsDisplay(bounds)
             }
-            // Continue with normal mouseDown for the new tool
         }
 
-        // --- 2. If using text tool, do NOT commit/remove text field or floating selection on click ---
+        // TEXT TOOL HANDLING
         if currentTool == .text {
-            // If a text field is present, check if the click is inside its frame or on its handles
-            if let tf = textField {
-                let tfRect = tf.frame
-                let handle = handleAt(lastMousePoint, in: tfRect)
-                if handle != .none || tfRect.contains(lastMousePoint) {
-                    // Begin resizing/moving the text box (do NOT commit/remove)
-                    // Convert to floating selection if resizing/moving (like selection)
-                    if handle != .none || (tfRect.contains(lastMousePoint) && handle == .none) {
-                        // Convert text field to floating selection
+            // If we have an active text box, only allow transform/move operations
+            if hasActiveTextBox {
+                // If a text field is present, check if the click is inside its frame or on its handles
+                if let tf = textField {
+                    let tfRect = tf.frame
+                    let handle = handleAt(lastMousePoint, in: tfRect)
+                    if handle != .none || tfRect.contains(lastMousePoint) {
+                        // Convert text field to floating selection for transform
                         lastTextString = tf.stringValue
                         selectionRotation = 0
                         let image = renderTextFieldToImage(tf)
@@ -710,7 +721,7 @@ class CanvasNSView: NSView {
                         tf.removeFromSuperview()
                         textField = nil
                         textInsertPoint = nil
-                        // Now begin transform or move as usual
+                        // Now begin transform or move
                         if handle != .none {
                             beginTransform(handle: handle, at: lastMousePoint)
                         } else {
@@ -719,28 +730,27 @@ class CanvasNSView: NSView {
                         setNeedsDisplay(bounds)
                         return
                     }
-                }
-                // If click is outside the text field, DO NOT commit/remove or start a new text box!
-                // Just ignore the click.
-                return
-            }
-            // If a floating selection (from previous text or selection), allow transform/move
-            if let rect = selectionRect, selectionImage != nil {
-                let handle = handleAt(lastMousePoint, in: rect)
-                if handle != .none {
-                    beginTransform(handle: handle, at: lastMousePoint)
-                    setNeedsDisplay(bounds)
+                    // Click is outside text field - ignore (don't start new text box)
                     return
                 }
-                if rect.contains(lastMousePoint) {
-                    startMovingSelection(at: lastMousePoint)
-                    setNeedsDisplay(bounds)
+                // If a floating selection exists (from text), allow transform/move
+                if let rect = selectionRect, selectionImage != nil {
+                    let handle = handleAt(lastMousePoint, in: rect)
+                    if handle != .none {
+                        beginTransform(handle: handle, at: lastMousePoint)
+                        setNeedsDisplay(bounds)
+                        return
+                    }
+                    if rect.contains(lastMousePoint) {
+                        startMovingSelection(at: lastMousePoint)
+                        setNeedsDisplay(bounds)
+                        return
+                    }
+                    // Click outside floating selection - ignore
                     return
                 }
-                // If click is outside floating selection, ignore (do not commit)
-                return
             }
-            // If no text field or floating selection, start new text box drag
+            // No active text box - start a new one
             textBoxStart = clamp(point)
             textBoxEnd = clamp(point)
             isDraggingTextBox = true
@@ -748,7 +758,7 @@ class CanvasNSView: NSView {
             return
         }
 
-        // --- TEXT FIELD HANDLE/RECT LOGIC ---
+        // TEXT FIELD HANDLE/RECT LOGIC (for non-text tools that might have a text field)
         if let tf = textField {
             let tfRect = tf.frame
             let handle = handleAt(lastMousePoint, in: tfRect)
@@ -764,7 +774,7 @@ class CanvasNSView: NSView {
                 tf.removeFromSuperview()
                 textField = nil
                 textInsertPoint = nil
-                // Now begin transform or move as usual
+                // Now begin transform or move
                 if handle != .none {
                     beginTransform(handle: handle, at: lastMousePoint)
                 } else {
@@ -775,7 +785,7 @@ class CanvasNSView: NSView {
             }
         }
 
-        // Check for canvas resize handle drags first.
+        // Check for canvas resize handle drags first
         if showResizeHandles {
             resizeEdge = resizeEdgeAt(point)
             if resizeEdge != .none {
@@ -832,33 +842,39 @@ class CanvasNSView: NSView {
             shapeEndPoint = p
             
         case .freeFormSelect:
-            // If we already have a captured selection, hit-test path or rect for moving
-            if let path = selectionPath, path.contains(p) {
-                startMovingSelection(at: p)
-            } else if let rect = selectionRect, selectionPath == nil, rect.contains(p) {
-                startMovingSelection(at: p)
-            } else {
-                // Start a new freehand path (unless combining, then keep existing)
-                if !(event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option)) {
-                    commitSelection()
-                    selectionImage = nil
-                    selectionRect = nil
-                    selectionPath = nil
+            // If we have an active selection, only allow transform/move operations
+            if hasActiveSelection {
+                if let path = selectionPath, path.contains(p) {
+                    startMovingSelection(at: p)
+                } else if let rect = selectionRect {
+                    let handle = handleAt(p, in: rect)
+                    if handle != .none {
+                        beginTransform(handle: handle, at: p)
+                    } else if rect.contains(p) {
+                        startMovingSelection(at: p)
+                    }
+                    // Click outside selection - ignore (don't start new selection)
                 }
+            } else {
+                // No active selection - start a new freehand path
                 freeFormPath = [p]
                 isMovingSelection = false
             }
             
         case .rectangleSelect:
-            if let rect = selectionRect, rect.contains(p) {
-                startMovingSelection(at: p)
-            } else {
-                if !(event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.option)) {
-                    commitSelection()
-                    selectionPath = nil
-                    selectionImage = nil
-                    selectionRect = nil
+            // If we have an active selection, only allow transform/move operations
+            if hasActiveSelection {
+                if let rect = selectionRect {
+                    let handle = handleAt(p, in: rect)
+                    if handle != .none {
+                        beginTransform(handle: handle, at: p)
+                    } else if rect.contains(p) {
+                        startMovingSelection(at: p)
+                    }
+                    // Click outside selection - ignore (don't start new selection)
                 }
+            } else {
+                // No active selection - start a new rectangle selection
                 shapeStartPoint = p
                 shapeEndPoint = p
             }
@@ -894,7 +910,7 @@ class CanvasNSView: NSView {
         
         switch currentTool {
         case .pencil, .brush, .eraser:
-            // Interpolate intermediate points for smoother strokes.
+            // Interpolate intermediate points for smoother strokes
             if let last = lastPoint {
                 let distance = hypot(p.x - last.x, p.y - last.y)
                 let steps = max(1, Int(distance / 2))
@@ -925,7 +941,7 @@ class CanvasNSView: NSView {
         case .freeFormSelect:
             if isMovingSelection {
                 moveSelection(to: p)
-            } else {
+            } else if !hasActiveSelection {
                 freeFormPath.append(p)
             }
             setNeedsDisplay(bounds)
@@ -933,7 +949,7 @@ class CanvasNSView: NSView {
         case .rectangleSelect:
             if isMovingSelection {
                 moveSelection(to: p)
-            } else {
+            } else if !hasActiveSelection {
                 shapeEndPoint = p
                 selectionRect = rectFromPoints(shapeStartPoint!, p)
             }
@@ -978,6 +994,7 @@ class CanvasNSView: NSView {
             textInsertPoint = rect.origin
             textBoxStart = nil
             textBoxEnd = nil
+            hasActiveTextBox = true  // Mark that we have an active text box
             setNeedsDisplay(bounds)
             return
         }
@@ -995,9 +1012,6 @@ class CanvasNSView: NSView {
         }
         
         let p = clamp(convert(event.locationInWindow, from: nil))
-        let add = event.modifierFlags.contains(.shift)
-        let subtract = event.modifierFlags.contains(.option)
-        let mode: SelectionCombineMode = subtract ? .subtract : (add ? .add : .replace)
         
         switch currentTool {
         case .pencil, .brush, .eraser:
@@ -1027,16 +1041,18 @@ class CanvasNSView: NSView {
         case .freeFormSelect:
             if isMovingSelection {
                 isMovingSelection = false
-            } else if freeFormPath.count > 2 {
-                finalizeFreeFormSelection(mode: mode)
+            } else if !hasActiveSelection && freeFormPath.count > 2 {
+                finalizeFreeFormSelection()
+                hasActiveSelection = true  // Mark selection as active
             }
             
         case .rectangleSelect:
             if isMovingSelection {
                 isMovingSelection = false
-            } else if let start = shapeStartPoint {
+            } else if !hasActiveSelection, let start = shapeStartPoint {
                 let rect = rectFromPoints(start, p)
-                finalizeRectangleSelection(rect: rect, mode: mode)
+                finalizeRectangleSelection(rect: rect)
+                hasActiveSelection = true  // Mark selection as active
                 shapeStartPoint = nil
                 shapeEndPoint = nil
             }
@@ -1337,7 +1353,10 @@ class CanvasNSView: NSView {
     /// Update the selection rect while dragging (and translate path if present).
     private func moveSelection(to point: NSPoint) {
         guard var rect = selectionRect else { return }
-        let newOrigin = NSPoint(x: point.x - selectionOffset.x, y: point.y - selectionOffset.y)
+        // Rotate the point into selection's local coordinates
+        let center = rectCenter(rect)
+        let rotatedPoint = rotatePoint(point, around: center, by: -selectionRotation)
+        let newOrigin = NSPoint(x: rotatedPoint.x - selectionOffset.x, y: rotatedPoint.y - selectionOffset.y)
         if let oldOrigin = lastSelectionOrigin, let path = selectionPath {
             let dx = newOrigin.x - oldOrigin.x
             let dy = newOrigin.y - oldOrigin.y
@@ -1349,8 +1368,8 @@ class CanvasNSView: NSView {
         selectionRect = rect
     }
     
-    /// Finalize free-form selection with combination mode.
-    private func finalizeFreeFormSelection(mode: SelectionCombineMode) {
+    /// Finalize free-form selection (no combination modes - simple replace).
+    private func finalizeFreeFormSelection() {
         guard freeFormPath.count > 2 else {
             freeFormPath = []
             return
@@ -1360,111 +1379,25 @@ class CanvasNSView: NSView {
         newPath.move(to: freeFormPath[0])
         for i in 1..<freeFormPath.count { newPath.line(to: freeFormPath[i]) }
         newPath.close()
-        combineSelection(with: newPath, mode: mode)
+        
+        // Capture selection from canvas using mask
+        selectionPath = newPath.copy() as? NSBezierPath
+        let bounds = selectionPath!.bounds
+        selectionRect = bounds
+        captureSelection(using: selectionPath!)
+        lastSelectionOrigin = bounds.origin
+        
         freeFormPath = []
     }
     
-    /// Finalize rectangle selection with combination mode.
-    private func finalizeRectangleSelection(rect: NSRect, mode: SelectionCombineMode) {
+    /// Finalize rectangle selection (no combination modes - simple replace).
+    private func finalizeRectangleSelection(rect: NSRect) {
         guard rect.width > 0, rect.height > 0 else { return }
-        let path = NSBezierPath(rect: rect)
-        combineSelection(with: path, mode: mode)
-    }
-    
-    /// Combine current selection with a new path using replace/add/subtract.
-    private func combineSelection(with newPath: NSBezierPath, mode: SelectionCombineMode) {
-        guard let image = canvasImage else { return }
         
-        switch mode {
-        case .replace:
-            // Capture selection from canvas using mask
-            selectionPath = newPath.copy() as? NSBezierPath
-            let bounds = selectionPath!.bounds
-            selectionRect = bounds
-            captureSelection(using: selectionPath!)
-            lastSelectionOrigin = bounds.origin
-            
-        case .add:
-            if selectionImage == nil {
-                // Nothing to add to; treat as replace
-                combineSelection(with: newPath, mode: .replace)
-                return
-            }
-            // Capture new area
-            let addBounds = newPath.bounds
-            guard addBounds.width > 0, addBounds.height > 0 else { return }
-            // Build a new union image sized to union of rects
-            guard let currentRect = selectionRect else { return }
-            let unionRect = currentRect.union(addBounds)
-            let unionImage = NSImage(size: unionRect.size)
-            unionImage.lockFocus()
-            // Draw existing selection at offset
-            let existingOffset = NSPoint(x: currentRect.origin.x - unionRect.origin.x,
-                                         y: currentRect.origin.y - unionRect.origin.y)
-            selectionImage?.draw(in: NSRect(x: existingOffset.x, y: existingOffset.y, width: currentRect.size.width, height: currentRect.size.height))
-            // Draw new captured area clipped to newPath
-            NSGraphicsContext.current?.saveGraphicsState()
-            let translated = newPath.copy() as! NSBezierPath
-            let t = AffineTransform(translationByX: -unionRect.origin.x, byY: -unionRect.origin.y)
-            translated.transform(using: t)
-            translated.addClip()
-            image.draw(in: NSRect(origin: .zero, size: unionRect.size),
-                       from: unionRect,
-                       operation: .sourceOver,
-                       fraction: 1.0)
-            NSGraphicsContext.current?.restoreGraphicsState()
-            unionImage.unlockFocus()
-            selectionImage = unionImage
-            selectionRect = unionRect
-            // Update selectionPath as union (non-zero rule)
-            if let existing = selectionPath?.copy() as? NSBezierPath {
-                existing.windingRule = .nonZero
-                existing.append(newPath)
-                selectionPath = existing
-            } else {
-                selectionPath = newPath.copy() as? NSBezierPath
-            }
-            lastSelectionOrigin = unionRect.origin
-            
-        case .subtract:
-            guard selectionImage != nil, let currentRect = selectionRect else {
-                // Nothing to subtract from; ignore
-                return
-            }
-            // Create a temp image with opaque fill inside newPath to punch out (destinationOut)
-            let temp = NSImage(size: currentRect.size)
-            temp.lockFocus()
-            NSColor.clear.setFill()
-            NSBezierPath(rect: NSRect(origin: .zero, size: currentRect.size)).fill()
-            let translated = newPath.copy() as! NSBezierPath
-            let t = AffineTransform(translationByX: -currentRect.origin.x, byY: -currentRect.origin.y)
-            translated.transform(using: t)
-            NSColor.black.setFill() // Opaque source for destinationOut
-            translated.fill()
-            temp.unlockFocus()
-            
-            // Apply destinationOut to remove from selectionImage
-            let result = NSImage(size: currentRect.size)
-            result.lockFocus()
-            selectionImage?.draw(at: .zero, from: NSRect(origin: .zero, size: currentRect.size), operation: .sourceOver, fraction: 1.0)
-            temp.draw(at: .zero, from: NSRect(origin: .zero, size: currentRect.size), operation: .destinationOut, fraction: 1.0)
-            result.unlockFocus()
-            selectionImage = result
-            
-            // Update path by introducing a hole (even-odd rule)
-            if selectionPath == nil {
-                // If we only had a rect selection, synthesize a path from it
-                if let rect = selectionRect {
-                    selectionPath = NSBezierPath(rect: rect)
-                }
-            }
-            if let existing = selectionPath?.copy() as? NSBezierPath {
-                existing.windingRule = .evenOdd
-                existing.append(newPath)
-                selectionPath = existing
-            }
-            // selectionRect remains the same; we don't shrink bounds here
-        }
+        selectionRect = rect
+        selectionPath = nil
+        captureSelection()
+        lastSelectionOrigin = rect.origin
     }
     
     /// Captures selection using a free-form mask (alpha outside the path).
@@ -1538,12 +1471,21 @@ class CanvasNSView: NSView {
             originalSelectionRect = nil
             selectionPath = nil
             lastSelectionOrigin = nil
+            selectionRotation = 0
             return
         }
         
         let newImage = NSImage(size: canvasSize)
         newImage.lockFocus()
         image.draw(in: NSRect(origin: .zero, size: canvasSize))
+        
+        // Apply rotation when committing
+        let ctx = NSGraphicsContext.current?.cgContext
+        let center = rectCenter(rect)
+        ctx?.translateBy(x: center.x, y: center.y)
+        ctx?.rotate(by: selectionRotation)
+        ctx?.translateBy(x: -center.x, y: -center.y)
+        
         selImage.draw(in: rect, from: NSRect(origin: .zero, size: rect.size), operation: .sourceOver, fraction: 1.0)
         newImage.unlockFocus()
         
@@ -1553,6 +1495,7 @@ class CanvasNSView: NSView {
         originalSelectionRect = nil
         selectionPath = nil
         lastSelectionOrigin = nil
+        selectionRotation = 0
         saveToDocument(actionName: "Move Selection")
     }
     
@@ -1622,6 +1565,7 @@ class CanvasNSView: NSView {
         originalSelectionRect = nil
         lastSelectionOrigin = origin
         isMovingSelection = false
+        hasActiveSelection = true
         setNeedsDisplay(bounds)
     }
     
@@ -1641,6 +1585,7 @@ class CanvasNSView: NSView {
         selectionPath = nil
         originalSelectionRect = nil
         lastSelectionOrigin = nil
+        hasActiveSelection = false
         setNeedsDisplay(bounds)
     }
     
@@ -1731,27 +1676,26 @@ class CanvasNSView: NSView {
     // MARK: - Selection Handles (resize/rotate)
     
     /// Draws square handles at corners/sides and a rotate handle above the top center.
-    private func drawSelectionHandles(_ rect: NSRect) {
+    private func drawSelectionHandles(_ rect: NSRect, rotation: CGFloat) {
         NSColor.controlAccentColor.setFill()
-        
-        for frame in handleFrames(for: rect) {
+        for frame in handleFrames(for: rect, rotation: rotation) {
             NSBezierPath(ovalIn: frame).fill()
         }
-        
         // Rotate handle: small circle above top-center with a line
-        let rotateFrame = rotateHandleFrame(for: rect)
+        let rotateFrame = rotateHandleFrame(for: rect, rotation: rotation)
         NSColor.secondaryLabelColor.setStroke()
+        let top = rotatePoint(NSPoint(x: rect.midX, y: rect.maxY), around: rectCenter(rect), by: rotation)
+        let rotateMid = NSPoint(x: rotateFrame.midX, y: rotateFrame.midY)
         let line = NSBezierPath()
-        line.move(to: NSPoint(x: rect.midX, y: rect.maxY))
-        line.line(to: NSPoint(x: rect.midX, y: rotateFrame.midY))
+        line.move(to: top)
+        line.line(to: rotateMid)
         line.lineWidth = 1
         line.stroke()
         NSColor.controlAccentColor.setFill()
         NSBezierPath(ovalIn: rotateFrame).fill()
     }
     
-    /// Returns frames for 8 resize handles (corners + sides).
-    private func handleFrames(for rect: NSRect) -> [NSRect] {
+    private func handleFrames(for rect: NSRect, rotation: CGFloat) -> [NSRect] {
         let s: CGFloat = 8
         let half = s / 2
         let points: [NSPoint] = [
@@ -1764,24 +1708,42 @@ class CanvasNSView: NSView {
             NSPoint(x: rect.minX, y: rect.minY), // bottomLeft
             NSPoint(x: rect.minX, y: rect.midY)  // left
         ]
-        return points.map { NSRect(x: $0.x - half, y: $0.y - half, width: s, height: s) }
+        let center = rectCenter(rect)
+        return points.map {
+            let rotated = rotatePoint($0, around: center, by: rotation)
+            return NSRect(x: rotated.x - half, y: rotated.y - half, width: s, height: s)
+        }
     }
     
-    /// Frame for the rotate handle above the top center.
-    private func rotateHandleFrame(for rect: NSRect) -> NSRect {
+    private func rotateHandleFrame(for rect: NSRect, rotation: CGFloat) -> NSRect {
         let s: CGFloat = 10
         let gap: CGFloat = 18
-        return NSRect(x: rect.midX - s/2, y: rect.maxY + gap, width: s, height: s)
+        let center = rectCenter(rect)
+        let top = rotatePoint(NSPoint(x: rect.midX, y: rect.maxY + gap), around: center, by: rotation)
+        return NSRect(x: top.x - s/2, y: top.y - s/2, width: s, height: s)
+    }
+    
+    private func rotatePoint(_ point: NSPoint, around center: NSPoint, by angle: CGFloat) -> NSPoint {
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        let cosA = cos(angle)
+        let sinA = sin(angle)
+        return NSPoint(
+            x: center.x + dx * cosA - dy * sinA,
+            y: center.y + dx * sinA + dy * cosA
+        )
     }
     
     /// Which selection handle is at a given point.
     private func handleAt(_ point: NSPoint, in rect: NSRect) -> SelectionHandle {
-        let frames = handleFrames(for: rect)
+        // Try all handles with rotation
+        let rotation = selectionRotation
+        let frames = handleFrames(for: rect, rotation: rotation)
         let names: [SelectionHandle] = [.topLeft, .top, .topRight, .right, .bottomRight, .bottom, .bottomLeft, .left]
         for (i, f) in frames.enumerated() where f.contains(point) {
             return names[i]
         }
-        if rotateHandleFrame(for: rect).contains(point) { return .rotate }
+        if rotateHandleFrame(for: rect, rotation: rotation).contains(point) { return .rotate }
         return .none
     }
     
@@ -1794,6 +1756,7 @@ class CanvasNSView: NSView {
         transformOriginalPath = selectionPath?.copy() as? NSBezierPath
         if handle == .rotate {
             let center = rectCenter(rect)
+            transformStartRotation = selectionRotation
             transformStartAngle = atan2(point.y - center.y, point.x - center.x) - selectionRotation
         }
     }
@@ -1807,7 +1770,6 @@ class CanvasNSView: NSView {
             let center = rectCenter(startRect)
             let angleNow = atan2(point.y - center.y, point.x - center.x)
             selectionRotation = angleNow - transformStartAngle
-            // Do not change rect size or selectionImage here!
             setNeedsDisplay(bounds)
         case .topLeft, .top, .topRight, .right, .bottomRight, .bottom, .bottomLeft, .left:
             var newRect = startRect
@@ -1862,14 +1824,13 @@ class CanvasNSView: NSView {
                 path.transform(using: aff)
                 aff = AffineTransform(translationByX: center.x, byY: center.y)
                 path.transform(using: aff)
-                // Also translate if origin moved (to keep top-left anchored appropriately)
+                // Also translate if origin moved
                 let delta = NSPoint(x: newRect.midX - startRect.midX, y: newRect.midY - startRect.midY)
                 aff = AffineTransform(translationByX: delta.x, byY: delta.y)
                 path.transform(using: aff)
                 selectionPath = path
             }
             selectionRect = newRect
-
             lastSelectionOrigin = newRect.origin
             
         case .none:
@@ -1884,6 +1845,7 @@ class CanvasNSView: NSView {
         transformOriginalImage = nil
         transformOriginalPath = nil
         transformStartAngle = 0
+        transformStartRotation = 0
     }
     
     // MARK: - Color Picker & Fill
@@ -1894,7 +1856,7 @@ class CanvasNSView: NSView {
               let tiffData = image.tiffRepresentation,
               let bitmap = NSBitmapImageRep(data: tiffData) else { return }
         
-        // Map view point (in points) to bitmap pixel coordinates (account for Retina/backing scale)
+        // Map view point (in points) to bitmap pixel coordinates
         let scaleX = CGFloat(bitmap.pixelsWide) / image.size.width
         let scaleY = CGFloat(bitmap.pixelsHigh) / image.size.height
         
@@ -1915,8 +1877,7 @@ class CanvasNSView: NSView {
         }
     }
     
-    /// Classic flood fill algorithm (stack-based) with a simple color tolerance,
-    /// starting at the clicked pixel.
+    /// Classic flood fill algorithm (stack-based) with a simple color tolerance.
     private func floodFill(at point: NSPoint) {
         guard let image = canvasImage,
               let tiffData = image.tiffRepresentation,
@@ -1958,7 +1919,6 @@ class CanvasNSView: NSView {
             stack.append((x, y - 1))
         }
         
-        // Ensure the image rep reports the canvas size in points (keeps mapping consistent)
         bitmap.size = canvasSize
         
         let newImage = NSImage(size: canvasSize)
@@ -2006,14 +1966,6 @@ class CanvasNSView: NSView {
         let state = ToolPaletteState.shared
         let font = NSFont(name: state.fontName, size: state.fontSize) ?? NSFont.systemFont(ofSize: state.fontSize)
         
-        // Apply bold/italic using font descriptor
-        var traits: NSFontDescriptor.SymbolicTraits = []
-        if state.isBold { traits.insert(.bold) }
-        if state.isItalic { traits.insert(.italic) }
-        
-        //let descriptor = font.fontDescriptor.withSymbolicTraits(traits)
-        //font = NSFont(descriptor: descriptor, size: state.fontSize) ?? font
-        
         let tf = NSTextField(frame: NSRect(x: point.x, y: point.y - state.fontSize - 4, width: 300, height: state.fontSize + 8))
         tf.isBordered = true
         tf.backgroundColor = .white
@@ -2029,6 +1981,7 @@ class CanvasNSView: NSView {
         addSubview(tf)
         tf.becomeFirstResponder()
         textField = tf
+        hasActiveTextBox = true
     }
 
     /// Called when the user presses Return in the text field; commits text to image.
@@ -2036,6 +1989,7 @@ class CanvasNSView: NSView {
         commitText()
         sender.removeFromSuperview()
         textField = nil
+        hasActiveTextBox = false
     }
 
     /// Renders the text field's contents into the canvas image at the insertion point.
@@ -2059,7 +2013,6 @@ class CanvasNSView: NSView {
             attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
         }
         let attrString = NSAttributedString(string: text, attributes: attrs)
-        // Draw inside the rect (multi-line)
         attrString.draw(in: rect)
         newImage.unlockFocus()
         canvasImage = newImage
@@ -2069,7 +2022,6 @@ class CanvasNSView: NSView {
 
     /// Renders the contents of an NSTextField to an NSImage.
     private func renderTextFieldToImage(_ tf: NSTextField) -> NSImage {
-        // Expand frame to fit text if needed
         tf.sizeToFit()
         var frame = tf.frame
         frame.size.width = max(frame.size.width, tf.intrinsicContentSize.width)
@@ -2100,7 +2052,6 @@ class CanvasNSView: NSView {
         case .right:
             newSize.width = max(50, point.x)
         case .bottom:
-            // Bottom handle: dragging down increases height
             newSize.height = max(50, resizeStartSize.height + (resizeStartSize.height - point.y))
         case .corner:
             newSize.width = max(50, point.x)
@@ -2109,7 +2060,6 @@ class CanvasNSView: NSView {
             return
         }
         
-        // Request resize through ContentView (which handles the actual resize)
         delegate?.requestCanvasResize(newSize)
     }
     
@@ -2122,7 +2072,7 @@ class CanvasNSView: NSView {
 
     /// Returns the center point of a rect.
     private func rectCenter(_ rect: NSRect) -> NSPoint {
-    NSPoint(x: rect.midX, y: rect.midY)
+        NSPoint(x: rect.midX, y: rect.midY)
     }
     
     /// Construct a rect from two corner points.
@@ -2146,8 +2096,7 @@ class CanvasNSView: NSView {
         shapeEndPoint = nil
     }
     
-    /// Serializes the current canvas image as PNG and saves to the document,
-    /// optionally registering an undo action with a descriptive name.
+    /// Serializes the current canvas image as PNG and saves to the document.
     private func saveToDocument(actionName: String?) {
         guard let image = canvasImage,
               let tiffData = image.tiffRepresentation,
@@ -2163,4 +2112,3 @@ class CanvasNSView: NSView {
         }
     }
 }
-
